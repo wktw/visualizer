@@ -1105,6 +1105,270 @@ class ShockwaveManager {
 }
 
 // ============================================================================
+// WAVE GRID CLASS
+// ============================================================================
+class WaveGrid {
+  constructor(scene, config = {}) {
+    this.scene = scene;
+    this.config = {
+      size: 128,           // Grid size (size x size points)
+      gridScale: 20,       // World space size of the grid
+      waveAmplitude: 1.0,
+      waveFrequency: 0.5,
+      waveSpeed: 1.0,
+      color1: '#00ffaa',
+      color2: '#00aaff',
+      color3: '#aa55ff',
+      opacity: 0.6,
+      particleSize: 2.0,
+      yOffset: -5.0,       // Vertical position offset
+      ...config
+    };
+
+    this.time = 0;
+    this.visible = true;
+    this.createGrid();
+    this.scene.add(this.mesh);
+  }
+
+  createGrid() {
+    const size = this.config.size;
+    const gridScale = this.config.gridScale;
+
+    // Create geometry
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(size * size * 3);
+    const uvs = new Float32Array(size * size * 2);
+
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        const idx = i * size + j;
+        // Position in XZ plane
+        positions[idx * 3 + 0] = (i / size - 0.5) * gridScale;
+        positions[idx * 3 + 1] = 0; // Y will be computed in shader
+        positions[idx * 3 + 2] = (j / size - 0.5) * gridScale;
+        // UV coordinates
+        uvs[idx * 2 + 0] = i / size;
+        uvs[idx * 2 + 1] = j / size;
+      }
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+
+    // Create material with wave shaders
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uWaveAmplitude: { value: this.config.waveAmplitude },
+        uWaveFrequency: { value: this.config.waveFrequency },
+        uWaveSpeed: { value: this.config.waveSpeed },
+        uColor1: { value: new THREE.Color(this.config.color1) },
+        uColor2: { value: new THREE.Color(this.config.color2) },
+        uColor3: { value: new THREE.Color(this.config.color3) },
+        uOpacity: { value: this.config.opacity },
+        uSize: { value: this.config.particleSize },
+        uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+        uYOffset: { value: this.config.yOffset }
+      },
+      vertexShader: `
+        uniform float uTime;
+        uniform float uWaveAmplitude;
+        uniform float uWaveFrequency;
+        uniform float uWaveSpeed;
+        uniform float uSize;
+        uniform float uPixelRatio;
+        uniform float uYOffset;
+
+        varying float vHeight;
+        varying vec2 vUv;
+
+        // Simplex noise for organic waves
+        vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec4 permute(vec4 x) { return mod289(((x * 34.0) + 1.0) * x); }
+        vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+        float snoise(vec3 v) {
+          const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
+          const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+
+          vec3 i = floor(v + dot(v, C.yyy));
+          vec3 x0 = v - i + dot(i, C.xxx);
+
+          vec3 g = step(x0.yzx, x0.xyz);
+          vec3 l = 1.0 - g;
+          vec3 i1 = min(g.xyz, l.zxy);
+          vec3 i2 = max(g.xyz, l.zxy);
+
+          vec3 x1 = x0 - i1 + C.xxx;
+          vec3 x2 = x0 - i2 + C.yyy;
+          vec3 x3 = x0 - D.yyy;
+
+          i = mod289(i);
+          vec4 p = permute(permute(permute(
+            i.z + vec4(0.0, i1.z, i2.z, 1.0))
+            + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+            + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+
+          float n_ = 0.142857142857;
+          vec3 ns = n_ * D.wyz - D.xzx;
+
+          vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+
+          vec4 x_ = floor(j * ns.z);
+          vec4 y_ = floor(j - 7.0 * x_);
+
+          vec4 x = x_ * ns.x + ns.yyyy;
+          vec4 y = y_ * ns.x + ns.yyyy;
+          vec4 h = 1.0 - abs(x) - abs(y);
+
+          vec4 b0 = vec4(x.xy, y.xy);
+          vec4 b1 = vec4(x.zw, y.zw);
+
+          vec4 s0 = floor(b0) * 2.0 + 1.0;
+          vec4 s1 = floor(b1) * 2.0 + 1.0;
+          vec4 sh = -step(h, vec4(0.0));
+
+          vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+          vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+
+          vec3 p0 = vec3(a0.xy, h.x);
+          vec3 p1 = vec3(a0.zw, h.y);
+          vec3 p2 = vec3(a1.xy, h.z);
+          vec3 p3 = vec3(a1.zw, h.w);
+
+          vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+          p0 *= norm.x;
+          p1 *= norm.y;
+          p2 *= norm.z;
+          p3 *= norm.w;
+
+          vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
+          m = m * m;
+          return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+        }
+
+        void main() {
+          vUv = uv;
+          vec3 pos = position;
+
+          // Multiple wave layers for organic motion
+          float wave1 = sin(pos.x * uWaveFrequency + uTime * uWaveSpeed) * uWaveAmplitude;
+          float wave2 = sin(pos.z * uWaveFrequency * 0.8 + uTime * uWaveSpeed * 1.2) * uWaveAmplitude * 0.7;
+          float wave3 = snoise(vec3(pos.xz * 0.3, uTime * 0.2)) * uWaveAmplitude * 0.5;
+          float wave4 = snoise(vec3(pos.xz * 0.15, uTime * 0.1)) * uWaveAmplitude * 0.8;
+
+          // Combine waves
+          pos.y = wave1 + wave2 + wave3 + wave4 + uYOffset;
+
+          // Normalize height for color mapping
+          vHeight = (pos.y - uYOffset) / (uWaveAmplitude * 3.0) * 0.5 + 0.5;
+
+          vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+
+          // Size with distance attenuation
+          float sizeAtten = 300.0 / -mvPosition.z;
+          gl_PointSize = uSize * sizeAtten * uPixelRatio;
+          gl_PointSize = max(gl_PointSize, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uColor1;
+        uniform vec3 uColor2;
+        uniform vec3 uColor3;
+        uniform float uOpacity;
+        uniform float uTime;
+
+        varying float vHeight;
+        varying vec2 vUv;
+
+        void main() {
+          // Distance from center of point
+          vec2 center = gl_PointCoord - 0.5;
+          float dist = length(center);
+
+          // Soft circular falloff
+          float alpha = smoothstep(0.5, 0.2, dist);
+          
+          // Add glow
+          float glow = exp(-dist * 4.0) * 0.8;
+          alpha = max(alpha, glow);
+
+          // Three-way color blend based on height
+          vec3 color;
+          if (vHeight < 0.5) {
+            color = mix(uColor1, uColor2, vHeight * 2.0);
+          } else {
+            color = mix(uColor2, uColor3, (vHeight - 0.5) * 2.0);
+          }
+
+          // Add subtle pulse
+          float pulse = sin(uTime * 2.0 + vUv.x * 10.0 + vUv.y * 10.0) * 0.1 + 0.9;
+          color *= pulse;
+
+          if (alpha < 0.01) discard;
+
+          gl_FragColor = vec4(color, alpha * uOpacity);
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+
+    this.mesh = new THREE.Points(geometry, material);
+    this.mesh.frustumCulled = false;
+  }
+
+  update(deltaTime, timeScale = 1.0) {
+    this.time += deltaTime * timeScale;
+
+    if (this.mesh && this.mesh.material.uniforms) {
+      this.mesh.material.uniforms.uTime.value = this.time;
+    }
+  }
+
+  setVisible(visible) {
+    this.visible = visible;
+    if (this.mesh) {
+      this.mesh.visible = visible;
+    }
+  }
+
+  setColors(color1, color2, color3) {
+    if (this.mesh && this.mesh.material.uniforms) {
+      this.mesh.material.uniforms.uColor1.value.set(color1);
+      this.mesh.material.uniforms.uColor2.value.set(color2);
+      this.mesh.material.uniforms.uColor3.value.set(color3);
+    }
+  }
+
+  setWaveParams(amplitude, frequency, speed) {
+    if (this.mesh && this.mesh.material.uniforms) {
+      this.mesh.material.uniforms.uWaveAmplitude.value = amplitude;
+      this.mesh.material.uniforms.uWaveFrequency.value = frequency;
+      this.mesh.material.uniforms.uWaveSpeed.value = speed;
+    }
+  }
+
+  setOpacity(opacity) {
+    if (this.mesh && this.mesh.material.uniforms) {
+      this.mesh.material.uniforms.uOpacity.value = opacity;
+    }
+  }
+
+  dispose() {
+    if (this.mesh) {
+      this.mesh.geometry.dispose();
+      this.mesh.material.dispose();
+      this.scene.remove(this.mesh);
+    }
+  }
+}
+
+// ============================================================================
 // GEOMETRIC STRUCTURE CLASS
 // ============================================================================
 class GeometricStructure {
@@ -1864,6 +2128,7 @@ class BackgroundManager {
           uniforms: {
             color1: { value: new THREE.Color(this.colors[0]) },
             color2: { value: new THREE.Color(this.colors[1]) },
+            color3: { value: new THREE.Color(this.colors[2] || this.colors[1]) },
             time: { value: 0 }
           },
           vertexShader: `
@@ -1878,6 +2143,7 @@ class BackgroundManager {
           fragmentShader: `
             uniform vec3 color1;
             uniform vec3 color2;
+            uniform vec3 color3;
             uniform float time;
             varying vec3 vPosition;
             varying vec2 vUv;
@@ -1949,15 +2215,38 @@ class BackgroundManager {
             }
 
             void main() {
-              vec3 pos = vPosition * 0.02;
-              float noise1 = snoise(pos + time * 0.02);
-              float noise2 = snoise(pos * 2.0 + time * 0.01) * 0.5;
-              float noise3 = snoise(pos * 4.0 - time * 0.015) * 0.25;
+              vec3 pos = vPosition * 0.01;
 
-              float n = (noise1 + noise2 + noise3) * 0.5 + 0.5;
+              // Multi-octave noise for rich nebula texture
+              float n1 = snoise(pos + time * 0.02) * 0.5 + 0.5;
+              float n2 = snoise(pos * 2.0 + time * 0.03) * 0.25 + 0.25;
+              float n3 = snoise(pos * 4.0 - time * 0.01) * 0.125 + 0.125;
+              float n4 = snoise(pos * 8.0 + time * 0.05) * 0.0625;
 
-              vec3 color = mix(color1, color2, n);
-              color += vec3(n * 0.1);
+              float noise = n1 + n2 + n3 + n4;
+              noise = pow(noise, 1.5); // Contrast boost
+
+              // Three-way color blend for richer gradients
+              vec3 color;
+              if (noise < 0.5) {
+                color = mix(color1, color2, noise * 2.0);
+              } else {
+                color = mix(color2, color3, (noise - 0.5) * 2.0);
+              }
+
+              // Add subtle animated stars
+              float starNoise = snoise(pos * 100.0 + time * 0.1);
+              float stars = pow(max(starNoise, 0.0), 20.0) * 0.5;
+              color += vec3(stars);
+
+              // Add subtle color variation based on position
+              float colorVariation = snoise(pos * 0.5 + time * 0.005) * 0.1;
+              color += colorVariation;
+
+              // Vignette darkening at edges
+              float vignette = 1.0 - length(vPosition.xy) * 0.003;
+              vignette = clamp(vignette, 0.5, 1.0);
+              color *= vignette;
 
               gl_FragColor = vec4(color, 1.0);
             }
@@ -2027,6 +2316,7 @@ function LuminousFlow() {
 
   // GPU Particle System (replaces emittersRef)
   const gpuParticlesRef = useRef(null);
+  const waveGridRef = useRef(null);
   const structuresRef = useRef([]);
   const ribbonsRef = useRef([]);
   const backgroundRef = useRef(null);
@@ -2066,6 +2356,11 @@ function LuminousFlow() {
   const [mouseFollow, setMouseFollow] = useState(true);
   const [autoPulse, setAutoPulse] = useState(true);
   const [pulseInterval, setPulseInterval] = useState(4);
+  
+  // Wave grid state
+  const [waveGridEnabled, setWaveGridEnabled] = useState(true);
+  const [waveAmplitude, setWaveAmplitude] = useState(1.0);
+  const [waveSpeed, setWaveSpeed] = useState(1.0);
 
   const [emitters, setEmitters] = useState([]);
   const [structures, setStructures] = useState([]);
@@ -2190,6 +2485,23 @@ function LuminousFlow() {
     // Initialize Mouse Attractor
     const mouseAttractor = new Attractor(new THREE.Vector3(0, 0, 0), 8.0, 'point');
     mouseAttractorRef.current = mouseAttractor;
+    
+    // Initialize Wave Grid
+    const palette = COLOR_PALETTES['Northern Lights'];
+    const waveGrid = new WaveGrid(scene, {
+      size: 128,
+      gridScale: 25,
+      waveAmplitude: 1.0,
+      waveFrequency: 0.5,
+      waveSpeed: 1.0,
+      color1: palette.primary,
+      color2: palette.secondary,
+      color3: palette.accent,
+      opacity: 0.5,
+      particleSize: 2.5,
+      yOffset: -6.0
+    });
+    waveGridRef.current = waveGrid;
 
     // Create default scene
     createDefaultScene();
@@ -2324,6 +2636,11 @@ function LuminousFlow() {
       ribbonsRef.current.forEach(ribbon => {
         ribbon.update(deltaTime, timeScale);
       });
+      
+      // Update wave grid
+      if (waveGridRef.current) {
+        waveGridRef.current.update(deltaTime, timeScale);
+      }
 
       // Update background
       if (backgroundRef.current) {
@@ -2385,6 +2702,12 @@ function LuminousFlow() {
       // Dispose ribbons
       ribbonsRef.current.forEach(r => r.dispose());
       ribbonsRef.current = [];
+      
+      // Dispose wave grid
+      if (waveGridRef.current) {
+        waveGridRef.current.dispose();
+        waveGridRef.current = null;
+      }
 
       // Dispose background
       if (backgroundRef.current) {
@@ -2452,6 +2775,19 @@ function LuminousFlow() {
   useEffect(() => {
     pulseIntervalRef.current = pulseInterval;
   }, [pulseInterval]);
+  
+  // Wave grid effects
+  useEffect(() => {
+    if (waveGridRef.current) {
+      waveGridRef.current.setVisible(waveGridEnabled);
+    }
+  }, [waveGridEnabled]);
+  
+  useEffect(() => {
+    if (waveGridRef.current) {
+      waveGridRef.current.setWaveParams(waveAmplitude, 0.5, waveSpeed);
+    }
+  }, [waveAmplitude, waveSpeed]);
 
   // Apply color palette
   useEffect(() => {
@@ -2466,6 +2802,11 @@ function LuminousFlow() {
     // Update GPU particles
     if (gpuParticlesRef.current) {
       gpuParticlesRef.current.setColors(palette.primary, palette.secondary, palette.accent);
+    }
+    
+    // Update wave grid colors
+    if (waveGridRef.current) {
+      waveGridRef.current.setColors(palette.primary, palette.secondary, palette.accent);
     }
     
     // Apply bloom presets for this palette
@@ -2927,6 +3268,53 @@ function LuminousFlow() {
               lineHeight: '1.4'
             }}>
               Click anywhere to trigger a shockwave!
+            </div>
+          </div>
+          
+          {/* Wave Grid Controls */}
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            background: 'rgba(0, 170, 255, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(0, 170, 255, 0.3)'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#00aaff'
+            }}>
+              Wave Grid
+            </div>
+            <Checkbox
+              label="Enable Wave Grid"
+              checked={waveGridEnabled}
+              onChange={setWaveGridEnabled}
+            />
+            {waveGridEnabled && (
+              <>
+                <Slider
+                  label="Wave Amplitude"
+                  value={waveAmplitude}
+                  onChange={setWaveAmplitude}
+                  min={0.2} max={3.0} step={0.1}
+                />
+                <Slider
+                  label="Wave Speed"
+                  value={waveSpeed}
+                  onChange={setWaveSpeed}
+                  min={0.2} max={3.0} step={0.1}
+                />
+              </>
+            )}
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              16,384 particles in undulating grid below the scene
             </div>
           </div>
         </Section>

@@ -7,6 +7,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { GPUComputationRenderer } from 'three/examples/jsm/misc/GPUComputationRenderer.js';
+import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
 
 // ============================================================================
 // COLOR PALETTES
@@ -120,6 +121,56 @@ const FilmGrainShader = {
       gl_FragColor = vec4(result, texel.a);
     }
   `
+};
+
+// Chromatic aberration shader
+const ChromaticAberrationShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uIntensity: { value: 0.003 },
+    uTime: { value: 0 }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float uIntensity;
+    uniform float uTime;
+    varying vec2 vUv;
+    
+    void main() {
+      // Radial chromatic aberration - stronger at edges
+      vec2 center = vUv - 0.5;
+      float dist = length(center);
+      vec2 offset = center * uIntensity * dist;
+      
+      // Slight animation for subtle movement
+      float animOffset = sin(uTime * 0.5) * 0.0005;
+      offset += animOffset;
+      
+      // Sample RGB channels with offset
+      float r = texture2D(tDiffuse, vUv + offset).r;
+      float g = texture2D(tDiffuse, vUv).g;
+      float b = texture2D(tDiffuse, vUv - offset).b;
+      
+      gl_FragColor = vec4(r, g, b, 1.0);
+    }
+  `
+};
+
+// Bloom presets per palette for optimized visual impact
+const BLOOM_PRESETS = {
+  'Northern Lights': { strength: 1.5, radius: 0.6, threshold: 0.3 },
+  'Deep Ocean': { strength: 1.8, radius: 0.5, threshold: 0.2 },
+  'Solar Corona': { strength: 2.2, radius: 0.7, threshold: 0.1 },
+  'Synthwave': { strength: 2.0, radius: 0.5, threshold: 0.2 },
+  'Monochrome Zen': { strength: 1.2, radius: 0.4, threshold: 0.4 },
+  'Ember & Ash': { strength: 1.8, radius: 0.6, threshold: 0.2 }
 };
 
 // Particle glow vertex shader
@@ -1980,6 +2031,9 @@ function LuminousFlow() {
   const ribbonsRef = useRef([]);
   const backgroundRef = useRef(null);
   const filmGrainPassRef = useRef(null);
+  const chromaticAberrationPassRef = useRef(null);
+  const fxaaPassRef = useRef(null);
+  const bloomPassRef = useRef(null);
   
   // Shockwave and interaction refs
   const shockwaveManagerRef = useRef(null);
@@ -2005,6 +2059,8 @@ function LuminousFlow() {
   const [autoRotateSpeed, setAutoRotateSpeed] = useState(0.5);
   const [immersionMode, setImmersionMode] = useState(false);
   const [filmGrain, setFilmGrain] = useState(false);
+  const [chromaticAberration, setChromaticAberration] = useState(true);
+  const [chromaticIntensity, setChromaticIntensity] = useState(0.003);
   
   // Interactivity state
   const [mouseFollow, setMouseFollow] = useState(true);
@@ -2081,6 +2137,14 @@ function LuminousFlow() {
     bloomPass.strength = 1.5;
     bloomPass.radius = 0.8;
     composer.addPass(bloomPass);
+    bloomPassRef.current = bloomPass;
+    
+    // Chromatic aberration pass - after bloom
+    const chromaticAberrationPass = new ShaderPass(ChromaticAberrationShader);
+    chromaticAberrationPass.uniforms.uIntensity.value = 0.003;
+    chromaticAberrationPass.enabled = true;
+    composer.addPass(chromaticAberrationPass);
+    chromaticAberrationPassRef.current = chromaticAberrationPass;
 
     const vignettePass = new ShaderPass(VignetteShader);
     vignettePass.uniforms.offset.value = 0.95;
@@ -2092,6 +2156,15 @@ function LuminousFlow() {
     filmGrainPass.enabled = false;
     composer.addPass(filmGrainPass);
     filmGrainPassRef.current = filmGrainPass;
+    
+    // FXAA anti-aliasing pass - last pass
+    const fxaaPass = new ShaderPass(FXAAShader);
+    fxaaPass.uniforms['resolution'].value.set(
+      1 / window.innerWidth,
+      1 / window.innerHeight
+    );
+    composer.addPass(fxaaPass);
+    fxaaPassRef.current = fxaaPass;
 
     composerRef.current = composer;
 
@@ -2177,6 +2250,14 @@ function LuminousFlow() {
 
       renderer.setSize(width, height);
       composer.setSize(width, height);
+      
+      // Update FXAA resolution uniform
+      if (fxaaPassRef.current) {
+        fxaaPassRef.current.uniforms['resolution'].value.set(
+          1 / width,
+          1 / height
+        );
+      }
     };
     window.addEventListener('resize', handleResize);
 
@@ -2252,6 +2333,11 @@ function LuminousFlow() {
       // Update film grain time
       if (filmGrainPassRef.current && filmGrainPassRef.current.enabled) {
         filmGrainPassRef.current.uniforms.time.value = elapsedTime;
+      }
+      
+      // Update chromatic aberration time
+      if (chromaticAberrationPassRef.current && chromaticAberrationPassRef.current.enabled) {
+        chromaticAberrationPassRef.current.uniforms.uTime.value = elapsedTime;
       }
 
       // Immersion mode camera drift
@@ -2346,6 +2432,19 @@ function LuminousFlow() {
     mouseFollowRef.current = mouseFollow;
   }, [mouseFollow]);
   
+  // Chromatic aberration effect
+  useEffect(() => {
+    if (chromaticAberrationPassRef.current) {
+      chromaticAberrationPassRef.current.enabled = chromaticAberration;
+    }
+  }, [chromaticAberration]);
+  
+  useEffect(() => {
+    if (chromaticAberrationPassRef.current) {
+      chromaticAberrationPassRef.current.uniforms.uIntensity.value = chromaticIntensity;
+    }
+  }, [chromaticIntensity]);
+  
   useEffect(() => {
     autoPulseRef.current = autoPulse;
   }, [autoPulse]);
@@ -2367,6 +2466,14 @@ function LuminousFlow() {
     // Update GPU particles
     if (gpuParticlesRef.current) {
       gpuParticlesRef.current.setColors(palette.primary, palette.secondary, palette.accent);
+    }
+    
+    // Apply bloom presets for this palette
+    const bloomPreset = BLOOM_PRESETS[colorPalette];
+    if (bloomPreset && bloomPassRef.current) {
+      bloomPassRef.current.strength = bloomPreset.strength;
+      bloomPassRef.current.radius = bloomPreset.radius;
+      bloomPassRef.current.threshold = bloomPreset.threshold;
     }
 
     // Update structures
@@ -2732,6 +2839,19 @@ function LuminousFlow() {
             checked={filmGrain}
             onChange={setFilmGrain}
           />
+          <Checkbox
+            label="Chromatic Aberration"
+            checked={chromaticAberration}
+            onChange={setChromaticAberration}
+          />
+          {chromaticAberration && (
+            <Slider
+              label="Aberration Intensity"
+              value={chromaticIntensity}
+              onChange={setChromaticIntensity}
+              min={0.001} max={0.01} step={0.001}
+            />
+          )}
         </Section>
 
         {/* GPU Particles Section */}

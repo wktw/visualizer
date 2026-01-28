@@ -2624,6 +2624,118 @@ class BackgroundManager {
 }
 
 // ============================================================================
+// AUDIO ANALYZER CLASS
+// ============================================================================
+class AudioAnalyzer {
+  constructor() {
+    this.audioContext = null;
+    this.analyser = null;
+    this.dataArray = null;
+    this.source = null;
+    this.active = false;
+    this.smoothing = 0.8;
+  }
+  
+  async connectMicrophone() {
+    try {
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // Create audio context if needed
+      if (!this.audioContext) {
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      
+      // Create analyser
+      this.analyser = this.audioContext.createAnalyser();
+      this.analyser.fftSize = 256;
+      this.analyser.smoothingTimeConstant = this.smoothing;
+      this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+      
+      // Connect source
+      this.source = this.audioContext.createMediaStreamSource(stream);
+      this.source.connect(this.analyser);
+      
+      this.active = true;
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to access microphone:', error);
+      return { success: false, error: error.message };
+    }
+  }
+  
+  connectAudioElement(audioElement) {
+    if (!this.audioContext) {
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    
+    this.analyser = this.audioContext.createAnalyser();
+    this.analyser.fftSize = 256;
+    this.analyser.smoothingTimeConstant = this.smoothing;
+    this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+    
+    this.source = this.audioContext.createMediaElementSource(audioElement);
+    this.source.connect(this.analyser);
+    this.analyser.connect(this.audioContext.destination);
+    
+    this.active = true;
+  }
+  
+  getFrequencyData() {
+    if (!this.active || !this.analyser) {
+      return { bass: 0, mid: 0, high: 0, overall: 0 };
+    }
+    
+    this.analyser.getByteFrequencyData(this.dataArray);
+    
+    return {
+      bass: this.getRange(0, 10) / 255,       // 0-300Hz
+      mid: this.getRange(10, 50) / 255,       // 300-1500Hz
+      high: this.getRange(50, 128) / 255,     // 1500Hz+
+      overall: this.getOverallVolume() / 255
+    };
+  }
+  
+  getRange(start, end) {
+    let sum = 0;
+    for (let i = start; i < end && i < this.dataArray.length; i++) {
+      sum += this.dataArray[i];
+    }
+    return sum / (end - start);
+  }
+  
+  getOverallVolume() {
+    let sum = 0;
+    for (let i = 0; i < this.dataArray.length; i++) {
+      sum += this.dataArray[i];
+    }
+    return sum / this.dataArray.length;
+  }
+  
+  detectBeat(threshold = 0.7) {
+    const bass = this.getRange(0, 10) / 255;
+    return bass > threshold;
+  }
+  
+  disconnect() {
+    if (this.source) {
+      this.source.disconnect();
+    }
+    if (this.audioContext) {
+      this.audioContext.close();
+    }
+    this.active = false;
+  }
+  
+  setSmoothing(value) {
+    this.smoothing = value;
+    if (this.analyser) {
+      this.analyser.smoothingTimeConstant = value;
+    }
+  }
+}
+
+// ============================================================================
 // MAIN APP COMPONENT
 // ============================================================================
 function LuminousFlow() {
@@ -2666,6 +2778,15 @@ function LuminousFlow() {
   
   // Quality management refs
   const qualityManagerRef = useRef(null);
+  
+  // Audio reactivity refs
+  const audioAnalyzerRef = useRef(null);
+  const audioEnabledRef = useRef(false);
+  const lastBeatTimeRef = useRef(0);
+  
+  // Recording refs
+  const mediaRecorderRef = useRef(null);
+  const recordedChunksRef = useRef([]);
   
   // Refs for state values accessible in animation loop
   const mouseFollowRef = useRef(true);
@@ -2715,9 +2836,20 @@ function LuminousFlow() {
   // Interactive structure state
   const [selectedStructureIndex, setSelectedStructureIndex] = useState(null);
   const [isDraggingStructure, setIsDraggingStructure] = useState(false);
-  
+
   // Touch support state
   const [isTouchDevice, setIsTouchDevice] = useState(false);
+
+  // Audio reactivity state
+  const [audioReactivity, setAudioReactivity] = useState(false);
+  const [audioSource, setAudioSource] = useState('none'); // 'none', 'microphone', 'file'
+  const [audioBass, setAudioBass] = useState(0);
+  const [audioMid, setAudioMid] = useState(0);
+  const [audioHigh, setAudioHigh] = useState(0);
+  const [beatThreshold, setBeatThreshold] = useState(0.7);
+
+  // Screenshot/recording state
+  const [isRecording, setIsRecording] = useState(false);
 
   const [emitters, setEmitters] = useState([]);
   const [structures, setStructures] = useState([]);
@@ -2732,7 +2864,9 @@ function LuminousFlow() {
     emitters: true,
     structures: true,
     ribbons: false,
-    camera: false
+    camera: false,
+    audio: false,
+    media: false
   });
 
   const [expandedItems, setExpandedItems] = useState({});
@@ -2877,6 +3011,10 @@ function LuminousFlow() {
       }
     });
     qualityManagerRef.current = qualityManager;
+    
+    // Initialize Audio Analyzer
+    const audioAnalyzer = new AudioAnalyzer();
+    audioAnalyzerRef.current = audioAnalyzer;
     
     // Initialize Wave Grid
     const palette = COLOR_PALETTES['Northern Lights'];
@@ -3273,6 +3411,64 @@ function LuminousFlow() {
         chromaticAberrationPassRef.current.uniforms.uTime.value = elapsedTime;
       }
 
+      // Audio reactivity system
+      if (audioAnalyzerRef.current && audioEnabledRef.current) {
+        const audioData = audioAnalyzerRef.current.getFrequencyData();
+        
+        // Update audio visualizer state (throttled)
+        if (Math.floor(elapsedTime * 10) % 5 === 0) {
+          setAudioBass(audioData.bass);
+          setAudioMid(audioData.mid);
+          setAudioHigh(audioData.high);
+        }
+        
+        // Bass-triggered shockwave
+        const isBeat = audioAnalyzerRef.current.detectBeat(beatThreshold);
+        if (isBeat && elapsedTime - lastBeatTimeRef.current > 0.3) {
+          if (shockwaveManagerRef.current) {
+            shockwaveManagerRef.current.trigger(
+              new THREE.Vector3(0, 0, 0),
+              audioData.bass * 20.0,  // strength based on bass
+              2.0,
+              8.0
+            );
+          }
+          lastBeatTimeRef.current = elapsedTime;
+        }
+        
+        // Mid frequencies affect particle turbulence/speed
+        if (gpuParticlesRef.current) {
+          const turbulenceBoost = audioData.mid * 2.0;
+          gpuParticlesRef.current.velocityUniforms.uNoiseScale.value = 0.5 + turbulenceBoost;
+        }
+        
+        // High frequencies affect chromatic aberration
+        if (chromaticAberrationPassRef.current && chromaticAberrationPassRef.current.enabled) {
+          const chromaticBoost = audioData.high * 0.005;
+          chromaticAberrationPassRef.current.uniforms.uIntensity.value = chromaticIntensity + chromaticBoost;
+        }
+        
+        // Overall volume affects bloom intensity
+        if (bloomPassRef.current && bloomPassRef.current.enabled) {
+          const bloomBoost = audioData.overall * 0.5;
+          bloomPassRef.current.strength = bloomIntensity + bloomBoost;
+        }
+        
+        // Wave grid amplitude reacts to bass
+        if (waveGridRef.current && waveGridEnabled) {
+          const waveBoost = audioData.bass * 1.5;
+          waveGridRef.current.setWaveParams(waveAmplitude + waveBoost, 0.5, waveSpeed);
+        }
+        
+        // Structure pulse reacts to mid frequencies
+        structuresRef.current.forEach(structure => {
+          if (structure.config) {
+            const originalPulse = structure.config.pulseIntensity || 0.1;
+            structure.config.pulseIntensity = originalPulse + audioData.mid * 0.3;
+          }
+        });
+      }
+      
       // Update quality manager (adaptive FPS-based quality adjustment)
       if (qualityManagerRef.current && autoQuality) {
         qualityManagerRef.current.update(deltaTime);
@@ -3325,6 +3521,18 @@ function LuminousFlow() {
       
       // Clear mouse attractor
       mouseAttractorRef.current = null;
+      
+      // Disconnect audio analyzer
+      if (audioAnalyzerRef.current) {
+        audioAnalyzerRef.current.disconnect();
+        audioAnalyzerRef.current = null;
+      }
+      
+      // Stop recording if active
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+        mediaRecorderRef.current = null;
+      }
 
       // Dispose GPU particles
       if (gpuParticlesRef.current) {
@@ -3924,6 +4132,119 @@ function LuminousFlow() {
       showToast(`Quality: ${levels[newIdx]}`, 'info');
     }
   }, [qualityLevel, showToast]);
+  
+  // Audio reactivity controls
+  const enableAudioReactivity = useCallback(async (source) => {
+    if (source === 'microphone') {
+      if (audioAnalyzerRef.current) {
+        const result = await audioAnalyzerRef.current.connectMicrophone();
+        if (result.success) {
+          setAudioReactivity(true);
+          setAudioSource('microphone');
+          audioEnabledRef.current = true;
+          showToast('Microphone connected', 'success');
+        } else {
+          showToast(`Microphone error: ${result.error}`, 'error');
+        }
+      }
+    }
+  }, [showToast]);
+  
+  const disableAudioReactivity = useCallback(() => {
+    if (audioAnalyzerRef.current) {
+      audioAnalyzerRef.current.disconnect();
+      audioEnabledRef.current = false;
+      setAudioReactivity(false);
+      setAudioSource('none');
+      showToast('Audio reactivity disabled', 'info');
+    }
+  }, [showToast]);
+  
+  // Screenshot capture
+  const captureScreenshot = useCallback((resolution = 2) => {
+    if (!rendererRef.current || !composerRef.current) return;
+    
+    const originalSize = new THREE.Vector2();
+    rendererRef.current.getSize(originalSize);
+    
+    // Render at higher resolution
+    const targetWidth = originalSize.x * resolution;
+    const targetHeight = originalSize.y * resolution;
+    
+    rendererRef.current.setSize(targetWidth, targetHeight);
+    composerRef.current.setSize(targetWidth, targetHeight);
+    
+    // Render one frame
+    composerRef.current.render();
+    
+    // Get image data
+    const dataUrl = rendererRef.current.domElement.toDataURL('image/png');
+    
+    // Restore original size
+    rendererRef.current.setSize(originalSize.x, originalSize.y);
+    composerRef.current.setSize(originalSize.x, originalSize.y);
+    
+    // Download
+    const link = document.createElement('a');
+    link.download = `luminous-flow-${Date.now()}.png`;
+    link.href = dataUrl;
+    link.click();
+    
+    showToast(`Screenshot saved (${targetWidth}x${targetHeight})`, 'success');
+  }, [showToast]);
+  
+  // Video recording
+  const startRecording = useCallback(() => {
+    if (!rendererRef.current || isRecording) return;
+    
+    try {
+      const stream = rendererRef.current.domElement.captureStream(30);
+      const mimeType = MediaRecorder.isTypeSupported('video/webm; codecs=vp9')
+        ? 'video/webm; codecs=vp9'
+        : 'video/webm';
+      
+      const recorder = new MediaRecorder(stream, {
+        mimeType,
+        videoBitsPerSecond: 2500000
+      });
+      
+      recordedChunksRef.current = [];
+      
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      };
+      
+      recorder.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        
+        const link = document.createElement('a');
+        link.download = `luminous-flow-${Date.now()}.webm`;
+        link.href = url;
+        link.click();
+        
+        URL.revokeObjectURL(url);
+        showToast('Recording saved', 'success');
+      };
+      
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+      showToast('Recording started (30fps)', 'info');
+    } catch (error) {
+      showToast(`Recording error: ${error.message}`, 'error');
+    }
+  }, [isRecording, showToast]);
+  
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+      setIsRecording(false);
+    }
+  }, []);
 
   // Load preset scene
   const loadPreset = useCallback((presetName) => {
@@ -4874,6 +5195,217 @@ function LuminousFlow() {
           </button>
         </Section>
 
+        {/* Audio Reactivity Section */}
+        <Section
+          title="Audio Reactivity"
+          expanded={expandedSections.audio}
+          onToggle={() => toggleSection('audio')}
+        >
+          <div style={{
+            padding: '12px',
+            background: audioReactivity ? 'rgba(0, 255, 100, 0.1)' : 'rgba(255, 100, 100, 0.1)',
+            borderRadius: '4px',
+            border: `1px solid ${audioReactivity ? 'rgba(0, 255, 100, 0.3)' : 'rgba(255, 100, 100, 0.3)'}`,
+            marginBottom: '12px'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '8px',
+              color: audioReactivity ? '#00ff64' : '#ff6464'
+            }}>
+              {audioReactivity ? '🎵 Audio Active' : '🔇 Audio Inactive'}
+            </div>
+            
+            {!audioReactivity ? (
+              <button
+                onClick={() => enableAudioReactivity('microphone')}
+                style={{ ...buttonStyle, width: '100%' }}
+              >
+                Connect Microphone
+              </button>
+            ) : (
+              <button
+                onClick={disableAudioReactivity}
+                style={{ ...buttonStyle, width: '100%', background: 'rgba(255, 100, 100, 0.2)' }}
+              >
+                Disconnect Audio
+              </button>
+            )}
+            
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              Microphone permission required. Audio affects particles, shockwaves, bloom, and more.
+            </div>
+          </div>
+          
+          {audioReactivity && (
+            <>
+              <div style={{
+                padding: '8px',
+                background: 'rgba(0, 0, 0, 0.3)',
+                borderRadius: '4px',
+                marginBottom: '10px'
+              }}>
+                <div style={{ fontSize: '11px', marginBottom: '6px', opacity: 0.7 }}>Frequency Levels</div>
+                <div style={{ display: 'flex', gap: '8px', fontSize: '10px' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ opacity: 0.5, marginBottom: '2px' }}>Bass</div>
+                    <div style={{
+                      height: '4px',
+                      background: 'rgba(255, 255, 255, 0.1)',
+                      borderRadius: '2px',
+                      overflow: 'hidden'
+                    }}>
+                      <div style={{
+                        height: '100%',
+                        width: `${audioBass * 100}%`,
+                        background: '#ff4444',
+                        transition: 'width 0.1s'
+                      }} />
+                    </div>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ opacity: 0.5, marginBottom: '2px' }}>Mid</div>
+                    <div style={{
+                      height: '4px',
+                      background: 'rgba(255, 255, 255, 0.1)',
+                      borderRadius: '2px',
+                      overflow: 'hidden'
+                    }}>
+                      <div style={{
+                        height: '100%',
+                        width: `${audioMid * 100}%`,
+                        background: '#44ff44',
+                        transition: 'width 0.1s'
+                      }} />
+                    </div>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ opacity: 0.5, marginBottom: '2px' }}>High</div>
+                    <div style={{
+                      height: '4px',
+                      background: 'rgba(255, 255, 255, 0.1)',
+                      borderRadius: '2px',
+                      overflow: 'hidden'
+                    }}>
+                      <div style={{
+                        height: '100%',
+                        width: `${audioHigh * 100}%`,
+                        background: '#4444ff',
+                        transition: 'width 0.1s'
+                      }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              <Slider
+                label="Beat Threshold"
+                value={beatThreshold}
+                onChange={setBeatThreshold}
+                min={0.3} max={0.9} step={0.05}
+              />
+              
+              <div style={{
+                fontSize: '10px',
+                opacity: 0.6,
+                marginTop: '8px',
+                lineHeight: '1.4'
+              }}>
+                Mappings:<br/>
+                • Bass → Shockwaves + Structure pulse<br/>
+                • Mid → Particle turbulence<br/>
+                • High → Chromatic aberration<br/>
+                • Volume → Bloom + Wave amplitude
+              </div>
+            </>
+          )}
+        </Section>
+
+        {/* Media Capture Section */}
+        <Section
+          title="Screenshot & Recording"
+          expanded={expandedSections.media}
+          onToggle={() => toggleSection('media')}
+        >
+          <div style={{
+            display: 'flex',
+            gap: '8px',
+            marginBottom: '12px'
+          }}>
+            <button
+              onClick={() => captureScreenshot(2)}
+              style={{ ...buttonStyle }}
+            >
+              📸 Screenshot (2x)
+            </button>
+            <button
+              onClick={() => captureScreenshot(4)}
+              style={{ ...buttonStyle }}
+            >
+              📸 HQ (4x)
+            </button>
+          </div>
+          
+          <div style={{
+            padding: '12px',
+            background: isRecording ? 'rgba(255, 50, 50, 0.1)' : 'rgba(50, 50, 70, 0.1)',
+            borderRadius: '4px',
+            border: `1px solid ${isRecording ? 'rgba(255, 50, 50, 0.3)' : 'rgba(50, 50, 70, 0.3)'}`,
+            marginBottom: '10px'
+          }}>
+            {!isRecording ? (
+              <button
+                onClick={startRecording}
+                style={{
+                  ...buttonStyle,
+                  width: '100%',
+                  background: 'rgba(255, 50, 50, 0.2)',
+                  border: '1px solid rgba(255, 50, 50, 0.4)'
+                }}
+              >
+                🔴 Start Recording
+              </button>
+            ) : (
+              <button
+                onClick={stopRecording}
+                style={{
+                  ...buttonStyle,
+                  width: '100%',
+                  background: 'rgba(255, 50, 50, 0.3)',
+                  border: '1px solid rgba(255, 50, 50, 0.5)',
+                  animation: 'pulse 1s infinite'
+                }}
+              >
+                ⏹️ Stop Recording
+              </button>
+            )}
+            
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4',
+              textAlign: 'center'
+            }}>
+              {isRecording ? 'Recording at 30fps...' : 'Capture WebM video at 30fps'}
+            </div>
+          </div>
+          
+          <div style={{
+            fontSize: '10px',
+            opacity: 0.6,
+            lineHeight: '1.4'
+          }}>
+            Screenshots are saved at 2x or 4x native resolution for high quality prints and social media.
+          </div>
+        </Section>
+
         {/* Footer */}
         <div style={{
           padding: '15px 20px',
@@ -4964,6 +5496,15 @@ function LuminousFlow() {
           to {
             opacity: 1;
             transform: translateY(0);
+          }
+        }
+        
+        @keyframes pulse {
+          0%, 100% {
+            opacity: 1;
+          }
+          50% {
+            opacity: 0.6;
           }
         }
       `}</style>

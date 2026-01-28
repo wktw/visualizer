@@ -6,6 +6,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { GPUComputationRenderer } from 'three/examples/jsm/misc/GPUComputationRenderer.js';
 
 // ============================================================================
 // COLOR PALETTES
@@ -209,8 +210,9 @@ const edgeGlowFragmentShader = `
 `;
 
 // ============================================================================
-// PARTICLE SYSTEM CLASS
+// PARTICLE SYSTEM CLASS (OLD - DEPRECATED - GPU VERSION BELOW)
 // ============================================================================
+/*
 class ParticleEmitter {
   constructor(scene, config) {
     this.scene = scene;
@@ -464,6 +466,414 @@ class ParticleEmitter {
     this.scene.remove(this.mesh);
     this.mesh.geometry.dispose();
     this.mesh.material.dispose();
+  }
+}
+*/
+
+// ============================================================================
+// GPU PARTICLE SYSTEM CLASS (NEW)
+// ============================================================================
+class GPUParticleSystem {
+  constructor(renderer, scene, particleCount = 256) {
+    this.renderer = renderer;
+    this.scene = scene;
+    this.SIZE = particleCount; // Texture width/height (total particles = SIZE²)
+    this.count = this.SIZE * this.SIZE;
+    this.initComputeRenderer();
+    this.initParticles();
+  }
+
+  initComputeRenderer() {
+    this.gpuCompute = new GPUComputationRenderer(this.SIZE, this.SIZE, this.renderer);
+
+    // Check for float texture support
+    if (!this.renderer.capabilities.isWebGL2) {
+      console.warn('WebGL2 not supported, GPGPU may not work');
+    }
+
+    // Create initial data textures
+    const dtPosition = this.gpuCompute.createTexture();
+    const dtVelocity = this.gpuCompute.createTexture();
+
+    // Fill with initial data
+    this.fillPositionTexture(dtPosition);
+    this.fillVelocityTexture(dtVelocity);
+
+    // Create computation variables
+    this.positionVariable = this.gpuCompute.addVariable(
+      'texturePosition',
+      this.getPositionShader(),
+      dtPosition
+    );
+    this.velocityVariable = this.gpuCompute.addVariable(
+      'textureVelocity',
+      this.getVelocityShader(),
+      dtVelocity
+    );
+
+    // Set variable dependencies
+    this.gpuCompute.setVariableDependencies(this.positionVariable, [this.positionVariable, this.velocityVariable]);
+    this.gpuCompute.setVariableDependencies(this.velocityVariable, [this.positionVariable, this.velocityVariable]);
+
+    // Add uniforms
+    this.positionUniforms = this.positionVariable.material.uniforms;
+    this.velocityUniforms = this.velocityVariable.material.uniforms;
+
+    this.positionUniforms.uTime = { value: 0.0 };
+    this.positionUniforms.uDelta = { value: 0.0 };
+    this.velocityUniforms.uTime = { value: 0.0 };
+    this.velocityUniforms.uDelta = { value: 0.0 };
+    this.velocityUniforms.uAttractorPos = { value: new THREE.Vector3(0, 0, 0) };
+    this.velocityUniforms.uAttractorStrength = { value: 3.0 };
+    this.velocityUniforms.uNoiseScale = { value: 0.5 };
+    this.velocityUniforms.uNoiseSpeed = { value: 0.2 };
+
+    // Initialize
+    const error = this.gpuCompute.init();
+    if (error !== null) {
+      console.error('GPUComputationRenderer error:', error);
+    }
+  }
+
+  fillPositionTexture(texture) {
+    const data = texture.image.data;
+    const radius = 5.0;
+
+    for (let i = 0; i < data.length; i += 4) {
+      // Random position in sphere
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      const r = Math.cbrt(Math.random()) * radius;
+
+      data[i + 0] = r * Math.sin(phi) * Math.cos(theta); // x
+      data[i + 1] = r * Math.sin(phi) * Math.sin(theta); // y
+      data[i + 2] = r * Math.cos(phi);                   // z
+      data[i + 3] = Math.random() * 5.0 + 2.0;           // lifetime
+    }
+  }
+
+  fillVelocityTexture(texture) {
+    const data = texture.image.data;
+
+    for (let i = 0; i < data.length; i += 4) {
+      data[i + 0] = (Math.random() - 0.5) * 0.5; // vx
+      data[i + 1] = (Math.random() - 0.5) * 0.5; // vy
+      data[i + 2] = (Math.random() - 0.5) * 0.5; // vz
+      data[i + 3] = 1.0;                          // mass
+    }
+  }
+
+  getPositionShader() {
+    return `
+      uniform float uTime;
+      uniform float uDelta;
+
+      void main() {
+        vec2 uv = gl_FragCoord.xy / resolution.xy;
+        vec4 pos = texture2D(texturePosition, uv);
+        vec4 vel = texture2D(textureVelocity, uv);
+
+        // Update position
+        pos.xyz += vel.xyz * uDelta;
+
+        // Decrease lifetime
+        pos.w -= uDelta;
+
+        // Respawn if dead
+        if (pos.w <= 0.0) {
+          // Respawn at random position in sphere
+          float theta = fract(sin(uv.x * 123.456 + uTime) * 43758.5453) * 6.28318;
+          float phi = acos(2.0 * fract(sin(uv.y * 789.012 + uTime) * 43758.5453) - 1.0);
+          float r = pow(fract(sin((uv.x + uv.y) * 456.789 + uTime) * 43758.5453), 0.333) * 3.0;
+
+          pos.x = r * sin(phi) * cos(theta);
+          pos.y = r * sin(phi) * sin(theta);
+          pos.z = r * cos(phi);
+          pos.w = 3.0 + fract(sin(uv.x * uv.y * 999.0 + uTime) * 43758.5453) * 4.0;
+        }
+
+        gl_FragColor = pos;
+      }
+    `;
+  }
+
+  getVelocityShader() {
+    return `
+      uniform float uTime;
+      uniform float uDelta;
+      uniform vec3 uAttractorPos;
+      uniform float uAttractorStrength;
+      uniform float uNoiseScale;
+      uniform float uNoiseSpeed;
+
+      // Simplex noise functions
+      vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 permute(vec4 x) { return mod289(((x * 34.0) + 1.0) * x); }
+      vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+      float snoise(vec3 v) {
+        const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
+        const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+
+        vec3 i = floor(v + dot(v, C.yyy));
+        vec3 x0 = v - i + dot(i, C.xxx);
+
+        vec3 g = step(x0.yzx, x0.xyz);
+        vec3 l = 1.0 - g;
+        vec3 i1 = min(g.xyz, l.zxy);
+        vec3 i2 = max(g.xyz, l.zxy);
+
+        vec3 x1 = x0 - i1 + C.xxx;
+        vec3 x2 = x0 - i2 + C.yyy;
+        vec3 x3 = x0 - D.yyy;
+
+        i = mod289(i);
+        vec4 p = permute(permute(permute(
+          i.z + vec4(0.0, i1.z, i2.z, 1.0))
+          + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+          + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+
+        float n_ = 0.142857142857;
+        vec3 ns = n_ * D.wyz - D.xzx;
+
+        vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+
+        vec4 x_ = floor(j * ns.z);
+        vec4 y_ = floor(j - 7.0 * x_);
+
+        vec4 x = x_ * ns.x + ns.yyyy;
+        vec4 y = y_ * ns.x + ns.yyyy;
+        vec4 h = 1.0 - abs(x) - abs(y);
+
+        vec4 b0 = vec4(x.xy, y.xy);
+        vec4 b1 = vec4(x.zw, y.zw);
+
+        vec4 s0 = floor(b0) * 2.0 + 1.0;
+        vec4 s1 = floor(b1) * 2.0 + 1.0;
+        vec4 sh = -step(h, vec4(0.0));
+
+        vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+        vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+
+        vec3 p0 = vec3(a0.xy, h.x);
+        vec3 p1 = vec3(a0.zw, h.y);
+        vec3 p2 = vec3(a1.xy, h.z);
+        vec3 p3 = vec3(a1.zw, h.w);
+
+        vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+        p0 *= norm.x;
+        p1 *= norm.y;
+        p2 *= norm.z;
+        p3 *= norm.w;
+
+        vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
+        m = m * m;
+        return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+      }
+
+      vec3 curlNoise(vec3 p) {
+        const float e = 0.1;
+        float n1 = snoise(p + vec3(e, 0, 0));
+        float n2 = snoise(p - vec3(e, 0, 0));
+        float n3 = snoise(p + vec3(0, e, 0));
+        float n4 = snoise(p - vec3(0, e, 0));
+        float n5 = snoise(p + vec3(0, 0, e));
+        float n6 = snoise(p - vec3(0, 0, e));
+
+        float x = (n3 - n4) - (n5 - n6);
+        float y = (n5 - n6) - (n1 - n2);
+        float z = (n1 - n2) - (n3 - n4);
+
+        return normalize(vec3(x, y, z));
+      }
+
+      void main() {
+        vec2 uv = gl_FragCoord.xy / resolution.xy;
+        vec4 pos = texture2D(texturePosition, uv);
+        vec4 vel = texture2D(textureVelocity, uv);
+
+        vec3 acceleration = vec3(0.0);
+
+        // Attractor force
+        vec3 toAttractor = uAttractorPos - pos.xyz;
+        float dist = length(toAttractor);
+        if (dist > 0.1) {
+          acceleration += normalize(toAttractor) * uAttractorStrength / (dist * dist + 1.0);
+        }
+
+        // Curl noise for organic movement
+        vec3 noisePos = pos.xyz * uNoiseScale + uTime * uNoiseSpeed;
+        vec3 curl = curlNoise(noisePos);
+        acceleration += curl * 2.0;
+
+        // Apply acceleration
+        vel.xyz += acceleration * uDelta;
+
+        // Damping
+        vel.xyz *= 0.98;
+
+        // Speed limit
+        float speed = length(vel.xyz);
+        if (speed > 5.0) {
+          vel.xyz = normalize(vel.xyz) * 5.0;
+        }
+
+        // Reset velocity if particle respawned
+        if (pos.w <= 0.0) {
+          vel.xyz = vec3(0.0);
+        }
+
+        gl_FragColor = vel;
+      }
+    `;
+  }
+
+  initParticles() {
+    // Create geometry with reference UVs
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(this.count * 3);
+    const references = new Float32Array(this.count * 2);
+
+    for (let i = 0; i < this.count; i++) {
+      const x = (i % this.SIZE) / this.SIZE;
+      const y = Math.floor(i / this.SIZE) / this.SIZE;
+
+      references[i * 2 + 0] = x;
+      references[i * 2 + 1] = y;
+
+      positions[i * 3 + 0] = 0;
+      positions[i * 3 + 1] = 0;
+      positions[i * 3 + 2] = 0;
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('reference', new THREE.BufferAttribute(references, 2));
+
+    // Create material
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        texturePosition: { value: null },
+        textureVelocity: { value: null },
+        uTime: { value: 0 },
+        uColor1: { value: new THREE.Color(0x00ffaa) },
+        uColor2: { value: new THREE.Color(0x00aaff) },
+        uColor3: { value: new THREE.Color(0xaa55ff) },
+        uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+        uSize: { value: 4.0 }
+      },
+      vertexShader: `
+        uniform sampler2D texturePosition;
+        uniform sampler2D textureVelocity;
+        uniform float uPixelRatio;
+        uniform float uSize;
+        uniform float uTime;
+
+        attribute vec2 reference;
+
+        varying vec3 vColor;
+        varying float vAlpha;
+        varying float vLife;
+
+        void main() {
+          vec4 pos = texture2D(texturePosition, reference);
+          vec4 vel = texture2D(textureVelocity, reference);
+
+          float life = pos.w / 7.0; // Normalize
+          float speed = length(vel.xyz);
+
+          // Life-based alpha
+          vAlpha = smoothstep(0.0, 0.15, life) * smoothstep(1.0, 0.7, life);
+          vLife = life;
+
+          // Speed-based color mixing
+          float colorMix = clamp(speed * 0.3, 0.0, 1.0);
+          vColor = mix(vec3(0.0, 1.0, 0.67), vec3(1.0, 0.4, 0.2), colorMix);
+
+          vec4 mvPosition = modelViewMatrix * vec4(pos.xyz, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+
+          // Size with attenuation
+          float sizeAtten = 200.0 / -mvPosition.z;
+          gl_PointSize = uSize * sizeAtten * uPixelRatio * (0.5 + speed * 0.2);
+          gl_PointSize = max(gl_PointSize, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vColor;
+        varying float vAlpha;
+        varying float vLife;
+
+        void main() {
+          vec2 center = gl_PointCoord - 0.5;
+          float dist = length(center);
+
+          // Soft glow with bright core
+          float core = exp(-dist * 10.0) * 1.5;
+          float glow = exp(-dist * 4.0);
+          float outer = exp(-dist * 2.0) * 0.4;
+
+          float intensity = core + glow * 0.5 + outer * 0.2;
+          intensity *= smoothstep(0.5, 0.15, dist);
+
+          // Pulse
+          intensity *= 0.9 + sin(vLife * 15.0) * 0.1;
+
+          vec3 finalColor = vColor * intensity;
+          float finalAlpha = vAlpha * intensity;
+
+          if (finalAlpha < 0.01) discard;
+
+          gl_FragColor = vec4(finalColor, finalAlpha);
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+
+    this.particles = new THREE.Points(geometry, material);
+    this.particles.frustumCulled = false;
+    this.scene.add(this.particles);
+  }
+
+  update(deltaTime, elapsedTime) {
+    // Clamp delta to avoid instability
+    const dt = Math.min(deltaTime, 0.05);
+
+    // Update uniforms
+    this.positionUniforms.uTime.value = elapsedTime;
+    this.positionUniforms.uDelta.value = dt;
+    this.velocityUniforms.uTime.value = elapsedTime;
+    this.velocityUniforms.uDelta.value = dt;
+
+    // Compute
+    this.gpuCompute.compute();
+
+    // Update particle material with new textures
+    this.particles.material.uniforms.texturePosition.value =
+      this.gpuCompute.getCurrentRenderTarget(this.positionVariable).texture;
+    this.particles.material.uniforms.textureVelocity.value =
+      this.gpuCompute.getCurrentRenderTarget(this.velocityVariable).texture;
+    this.particles.material.uniforms.uTime.value = elapsedTime;
+  }
+
+  setAttractor(position, strength) {
+    this.velocityUniforms.uAttractorPos.value.copy(position);
+    this.velocityUniforms.uAttractorStrength.value = strength;
+  }
+
+  setColors(color1, color2, color3) {
+    this.particles.material.uniforms.uColor1.value.set(color1);
+    this.particles.material.uniforms.uColor2.value.set(color2);
+    this.particles.material.uniforms.uColor3.value.set(color3);
+  }
+
+  dispose() {
+    this.particles.geometry.dispose();
+    this.particles.material.dispose();
+    this.scene.remove(this.particles);
+    // GPUComputationRenderer doesn't have a dispose method, but textures are managed internally
   }
 }
 
@@ -1388,7 +1798,8 @@ function LuminousFlow() {
   const clockRef = useRef(new THREE.Clock());
   const animationIdRef = useRef(null);
 
-  const emittersRef = useRef([]);
+  // GPU Particle System (replaces emittersRef)
+  const gpuParticlesRef = useRef(null);
   const structuresRef = useRef([]);
   const ribbonsRef = useRef([]);
   const backgroundRef = useRef(null);
@@ -1502,6 +1913,10 @@ function LuminousFlow() {
     // Fog for depth
     scene.fog = new THREE.FogExp2(0x000000, 0.02);
 
+    // Initialize GPU Particle System
+    const gpuParticles = new GPUParticleSystem(renderer, scene, 256); // 256² = 65,536 particles
+    gpuParticlesRef.current = gpuParticles;
+
     // Create default scene
     createDefaultScene();
 
@@ -1530,10 +1945,10 @@ function LuminousFlow() {
         controlsRef.current.update();
       }
 
-      // Update emitters
-      emittersRef.current.forEach(emitter => {
-        emitter.update(deltaTime, timeScale, gravity, turbulence);
-      });
+      // Update GPU particles
+      if (gpuParticlesRef.current) {
+        gpuParticlesRef.current.update(deltaTime, elapsedTime);
+      }
 
       // Update structures
       structuresRef.current.forEach(structure => {
@@ -1575,9 +1990,11 @@ function LuminousFlow() {
         cancelAnimationFrame(animationIdRef.current);
       }
 
-      // Dispose emitters
-      emittersRef.current.forEach(e => e.dispose());
-      emittersRef.current = [];
+      // Dispose GPU particles
+      if (gpuParticlesRef.current) {
+        gpuParticlesRef.current.dispose();
+        gpuParticlesRef.current = null;
+      }
 
       // Dispose structures
       structuresRef.current.forEach(s => s.dispose());
@@ -1638,10 +2055,10 @@ function LuminousFlow() {
       backgroundRef.current.setColors(palette.background);
     }
 
-    // Update emitters
-    emittersRef.current.forEach(emitter => {
-      emitter.setColors([palette.primary, palette.secondary, palette.accent, palette.highlight]);
-    });
+    // Update GPU particles
+    if (gpuParticlesRef.current) {
+      gpuParticlesRef.current.setColors(palette.primary, palette.secondary, palette.accent);
+    }
 
     // Update structures
     structuresRef.current.forEach(structure => {
@@ -1654,10 +2071,6 @@ function LuminousFlow() {
     });
 
     // Update state for UI
-    setEmitters(prev => prev.map(e => ({
-      ...e,
-      color: palette.primary
-    })));
     setStructures(prev => prev.map(s => ({
       ...s,
       color: palette.primary
@@ -1687,46 +2100,11 @@ function LuminousFlow() {
     structuresRef.current.push(structure);
     setStructures([{ id: Date.now(), ...structureConfig }]);
 
-    // Vortex emitter
-    const vortexConfig = {
-      type: 'vortex',
-      position: new THREE.Vector3(0, 0, 0),
-      emissionRate: 80,
-      particleLifetime: 4,
-      particleSizeMin: 0.1,
-      particleSizeMax: 0.25,
-      velocityMin: 0.5,
-      velocityMax: 1.5,
-      colors: [palette.primary, palette.secondary, palette.accent],
-      trailLength: 8,
-      gravity: 0,
-      turbulence: 0.3
-    };
-    const vortex = new ParticleEmitter(sceneRef.current, vortexConfig);
-    emittersRef.current.push(vortex);
-
-    // Fountain emitter
-    const fountainConfig = {
-      type: 'fountain',
-      position: new THREE.Vector3(0, -2, 0),
-      emissionRate: 40,
-      particleLifetime: 3,
-      particleSizeMin: 0.08,
-      particleSizeMax: 0.2,
-      velocityMin: 2,
-      velocityMax: 4,
-      colors: [palette.secondary, palette.highlight],
-      trailLength: 5,
-      gravity: -1,
-      turbulence: 0.2
-    };
-    const fountain = new ParticleEmitter(sceneRef.current, fountainConfig);
-    emittersRef.current.push(fountain);
-
-    setEmitters([
-      { id: Date.now(), ...vortexConfig },
-      { id: Date.now() + 1, ...fountainConfig }
-    ]);
+    // GPU particles are already initialized in useEffect
+    // Set colors for particles
+    if (gpuParticlesRef.current) {
+      gpuParticlesRef.current.setColors(palette.primary, palette.secondary, palette.accent);
+    }
 
     // Helix ribbon
     const ribbonConfig = {
@@ -1742,51 +2120,20 @@ function LuminousFlow() {
     setRibbons([{ id: Date.now(), ...ribbonConfig }]);
   }, [colorPalette]);
 
-  // Add emitter
+  // Old emitter functions - commented out (GPU particles replace these)
+  /*
   const addEmitter = useCallback((type = 'fountain') => {
-    const palette = COLOR_PALETTES[colorPalette];
-    const config = {
-      type,
-      position: new THREE.Vector3(
-        (Math.random() - 0.5) * 4,
-        (Math.random() - 0.5) * 2,
-        (Math.random() - 0.5) * 4
-      ),
-      emissionRate: 50,
-      particleLifetime: 3,
-      particleSizeMin: 0.1,
-      particleSizeMax: 0.3,
-      velocityMin: 1,
-      velocityMax: 3,
-      colors: [palette.primary, palette.secondary, palette.accent],
-      trailLength: 5,
-      gravity: -1,
-      turbulence: 0.5
-    };
-
-    const emitter = new ParticleEmitter(sceneRef.current, config);
-    emittersRef.current.push(emitter);
-    setEmitters(prev => [...prev, { id: Date.now(), ...config }]);
+    // Replaced by GPU particle system
   }, [colorPalette]);
 
-  // Remove emitter
   const removeEmitter = useCallback((index) => {
-    if (emittersRef.current[index]) {
-      emittersRef.current[index].dispose();
-      emittersRef.current.splice(index, 1);
-      setEmitters(prev => prev.filter((_, i) => i !== index));
-    }
+    // Replaced by GPU particle system
   }, []);
 
-  // Update emitter
   const updateEmitter = useCallback((index, key, value) => {
-    if (emittersRef.current[index]) {
-      emittersRef.current[index].config[key] = value;
-      setEmitters(prev => prev.map((e, i) =>
-        i === index ? { ...e, [key]: value } : e
-      ));
-    }
+    // Replaced by GPU particle system
   }, []);
+  */
 
   // Add structure
   const addStructure = useCallback((type = 'icosahedron') => {
@@ -1921,13 +2268,7 @@ function LuminousFlow() {
       setTimeout(() => addStructure(type), i * 100);
     }
 
-    // Add 2-4 emitters
-    const emitterTypes = ['fountain', 'vortex', 'orbital', 'explosion', 'stream'];
-    const numEmitters = 2 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < numEmitters; i++) {
-      const type = emitterTypes[Math.floor(Math.random() * emitterTypes.length)];
-      setTimeout(() => addEmitter(type), i * 100);
-    }
+    // GPU particles remain (always active, no need to add)
 
     // Add 1-2 ribbons
     const ribbonTypes = ['helix', 'lissajous', 'toroidal', 'spiral'];
@@ -1941,7 +2282,7 @@ function LuminousFlow() {
     setTimeScale(0.5 + Math.random() * 1.5);
     setBloomIntensity(1 + Math.random() * 1.5);
     setTurbulence(Math.random() * 1.5);
-  }, [clearScene, addStructure, addEmitter, addRibbon]);
+  }, [clearScene, addStructure, addRibbon]);
 
   // Reset camera
   const resetCamera = useCallback(() => {
@@ -2084,67 +2425,47 @@ function LuminousFlow() {
           />
         </Section>
 
-        {/* Emitters Section */}
+        {/* GPU Particles Section */}
         <Section
-          title={`Emitters (${emitters.length})`}
+          title="GPU Particles"
           expanded={expandedSections.emitters}
           onToggle={() => toggleSection('emitters')}
         >
-          <button
-            onClick={() => addEmitter()}
-            style={{ ...buttonStyle, width: '100%', marginBottom: '10px' }}
-          >
-            + Add Emitter
-          </button>
-          {emitters.map((emitter, index) => (
-            <ItemPanel
-              key={emitter.id}
-              title={`${emitter.type} Emitter`}
-              expanded={expandedItems[emitter.id]}
-              onToggle={() => toggleItem(emitter.id)}
-              onDelete={() => removeEmitter(index)}
-            >
-              <Select
-                label="Type"
-                value={emitter.type}
-                onChange={(v) => {
-                  updateEmitter(index, 'type', v);
-                  // Recreate emitter with new type
-                  const config = { ...emittersRef.current[index].config, type: v };
-                  emittersRef.current[index].dispose();
-                  emittersRef.current[index] = new ParticleEmitter(sceneRef.current, config);
-                }}
-                options={['fountain', 'vortex', 'orbital', 'explosion', 'stream']}
-              />
-              <Slider
-                label="Emission Rate"
-                value={emitter.emissionRate}
-                onChange={(v) => updateEmitter(index, 'emissionRate', v)}
-                min={10} max={200} step={5}
-              />
-              <Slider
-                label="Particle Size"
-                value={emitter.particleSizeMax}
-                onChange={(v) => {
-                  updateEmitter(index, 'particleSizeMax', v);
-                  updateEmitter(index, 'particleSizeMin', v * 0.5);
-                }}
-                min={0.05} max={0.5} step={0.01}
-              />
-              <Slider
-                label="Lifetime"
-                value={emitter.particleLifetime}
-                onChange={(v) => updateEmitter(index, 'particleLifetime', v)}
-                min={1} max={10} step={0.5}
-              />
-              <Slider
-                label="Trail Length"
-                value={emitter.trailLength}
-                onChange={(v) => updateEmitter(index, 'trailLength', v)}
-                min={0} max={20} step={1}
-              />
-            </ItemPanel>
-          ))}
+          <div style={{
+            padding: '12px',
+            background: 'rgba(0, 255, 170, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(0, 255, 170, 0.3)',
+            marginBottom: '10px'
+          }}>
+            <div style={{
+              fontSize: '14px',
+              fontWeight: '500',
+              marginBottom: '6px',
+              color: '#00ffaa'
+            }}>
+              ✓ GPU Particles Active
+            </div>
+            <div style={{
+              fontSize: '11px',
+              opacity: 0.8,
+              lineHeight: '1.4'
+            }}>
+              65,536 particles (256×256 texture)<br/>
+              GPU-computed positions & velocities<br/>
+              Curl noise + central attractor
+            </div>
+          </div>
+          <div style={{
+            fontSize: '11px',
+            opacity: 0.6,
+            padding: '8px',
+            background: 'rgba(255, 255, 255, 0.05)',
+            borderRadius: '4px',
+            lineHeight: '1.5'
+          }}>
+            <strong>Note:</strong> The old CPU-based emitter system has been replaced with a high-performance GPGPU particle system. All particles are now computed on the GPU for smooth 60fps performance.
+          </div>
         </Section>
 
         {/* Structures Section */}

@@ -58,6 +58,129 @@ const COLOR_PALETTES = {
 };
 
 // ============================================================================
+// SCENE PRESETS - Curated configurations
+// ============================================================================
+const SCENE_PRESETS = {
+  'Cosmic Dance': {
+    description: 'Ethereal deep ocean with swirling rings',
+    palette: 'Deep Ocean',
+    background: 'nebula',
+    timeScale: 0.8,
+    bloom: 1.8,
+    structures: [
+      { type: 'rings', scale: 1.2, position: [0, 0, 0], rotationSpeed: 0.3 },
+      { type: 'icosahedron', scale: 0.4, position: [0, 0, 0], rotationSpeed: 0.2 }
+    ],
+    ribbons: [
+      { type: 'toroidal', thickness: 0.06 }
+    ],
+    waveGrid: true,
+    waveAmplitude: 1.5
+  },
+  'Solar Flare': {
+    description: 'Intense fiery energy burst',
+    palette: 'Solar Corona',
+    background: 'gradient',
+    timeScale: 1.3,
+    bloom: 2.2,
+    structures: [
+      { type: 'torus', scale: 0.8, position: [0, 0, 0], rotationSpeed: 0.5 }
+    ],
+    ribbons: [
+      { type: 'spiral', thickness: 0.1 },
+      { type: 'helix', thickness: 0.05 }
+    ],
+    waveGrid: true,
+    waveAmplitude: 2.0
+  },
+  'Digital Dreams': {
+    description: 'Synthwave aesthetic with geometric precision',
+    palette: 'Synthwave',
+    background: 'nebula',
+    timeScale: 1.0,
+    bloom: 2.0,
+    structures: [
+      { type: 'helix', scale: 1.5, position: [0, 0, 0], rotationSpeed: 0.15 },
+      { type: 'mobius', scale: 0.6, position: [2, 0, 0], rotationSpeed: 0.4 }
+    ],
+    ribbons: [
+      { type: 'lissajous', thickness: 0.08 }
+    ],
+    waveGrid: true,
+    waveAmplitude: 0.8
+  },
+  'Zen Garden': {
+    description: 'Minimal and meditative monochrome',
+    palette: 'Monochrome Zen',
+    background: 'gradient',
+    timeScale: 0.5,
+    bloom: 1.2,
+    structures: [
+      { type: 'icosahedron', scale: 1.0, position: [0, 0, 0], rotationSpeed: 0.1 }
+    ],
+    ribbons: [],
+    waveGrid: true,
+    waveAmplitude: 0.5
+  },
+  'Aurora Borealis': {
+    description: 'Northern lights dancing in the sky',
+    palette: 'Northern Lights',
+    background: 'nebula',
+    timeScale: 0.7,
+    bloom: 1.5,
+    structures: [
+      { type: 'rings', scale: 1.8, position: [0, 0, 0], rotationSpeed: 0.08 }
+    ],
+    ribbons: [
+      { type: 'helix', thickness: 0.12 },
+      { type: 'toroidal', thickness: 0.04 }
+    ],
+    waveGrid: true,
+    waveAmplitude: 1.2
+  },
+  'Ember Storm': {
+    description: 'Fiery particles in chaotic motion',
+    palette: 'Ember & Ash',
+    background: 'gradient',
+    timeScale: 1.5,
+    bloom: 1.8,
+    structures: [
+      { type: 'torus', scale: 0.6, position: [0, 1, 0], rotationSpeed: 0.8 },
+      { type: 'torus', scale: 0.4, position: [0, -1, 0], rotationSpeed: -0.6 }
+    ],
+    ribbons: [
+      { type: 'spiral', thickness: 0.15 }
+    ],
+    waveGrid: false,
+    waveAmplitude: 1.0
+  }
+};
+
+// ============================================================================
+// KEYBOARD SHORTCUTS
+// ============================================================================
+const KEYBOARD_SHORTCUTS = {
+  ' ': { action: 'triggerPulse', description: 'Trigger shockwave pulse' },
+  'r': { action: 'randomize', description: 'Randomize scene' },
+  'c': { action: 'clearScene', description: 'Clear all objects' },
+  'h': { action: 'toggleUI', description: 'Hide/show control panel' },
+  'f': { action: 'toggleFullscreen', description: 'Toggle fullscreen' },
+  'p': { action: 'togglePause', description: 'Pause/resume animation' },
+  'm': { action: 'toggleMouseFollow', description: 'Toggle mouse attraction' },
+  'g': { action: 'toggleWaveGrid', description: 'Toggle wave grid' },
+  '1': { action: 'palette1', description: 'Northern Lights palette' },
+  '2': { action: 'palette2', description: 'Deep Ocean palette' },
+  '3': { action: 'palette3', description: 'Solar Corona palette' },
+  '4': { action: 'palette4', description: 'Synthwave palette' },
+  '5': { action: 'palette5', description: 'Monochrome Zen palette' },
+  '6': { action: 'palette6', description: 'Ember & Ash palette' },
+  '=': { action: 'qualityUp', description: 'Increase quality' },
+  '-': { action: 'qualityDown', description: 'Decrease quality' },
+  'Escape': { action: 'resetCamera', description: 'Reset camera position' },
+  '?': { action: 'showHelp', description: 'Show keyboard shortcuts' }
+};
+
+// ============================================================================
 // CUSTOM SHADERS
 // ============================================================================
 
@@ -2511,6 +2634,15 @@ function LuminousFlow() {
   const autoPulseRef = useRef(true);
   const pulseIntervalRef = useRef(4);
 
+  // UI visibility and app state
+  const [uiVisible, setUiVisible] = useState(true);
+  const [paused, setPaused] = useState(false);
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showPresets, setShowPresets] = useState(false);
+  const [toasts, setToasts] = useState([]);
+  const pausedRef = useRef(false);
+
   // State
   const [timeScale, setTimeScale] = useState(1);
   const [gravity, setGravity] = useState(1);
@@ -2940,6 +3072,129 @@ function LuminousFlow() {
     };
   }, []);
 
+  // Detect prefers-reduced-motion on mount
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (mediaQuery.matches) {
+      setReducedMotion(true);
+      setTimeScale(0.3);
+      setAutoPulse(false);
+      setChromaticAberration(false);
+      showToast('Reduced motion mode enabled', 'info');
+    }
+    
+    const handleChange = (e) => {
+      if (e.matches) {
+        setReducedMotion(true);
+        setTimeScale(0.3);
+        setAutoPulse(false);
+        showToast('Reduced motion mode enabled', 'info');
+      }
+    };
+    
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      // Don't trigger shortcuts if user is typing in an input
+      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA' || event.target.tagName === 'SELECT') {
+        return;
+      }
+      
+      const key = event.key.toLowerCase();
+      const shortcut = KEYBOARD_SHORTCUTS[key] || KEYBOARD_SHORTCUTS[event.key];
+      
+      if (!shortcut) return;
+      
+      event.preventDefault();
+      
+      const paletteNames = Object.keys(COLOR_PALETTES);
+      
+      switch (shortcut.action) {
+        case 'triggerPulse':
+          triggerManualPulse();
+          break;
+        case 'randomize':
+          randomize();
+          showToast('Scene randomized', 'success');
+          break;
+        case 'clearScene':
+          clearScene();
+          showToast('Scene cleared', 'info');
+          break;
+        case 'toggleUI':
+          setUiVisible(prev => !prev);
+          showToast(uiVisible ? 'UI hidden' : 'UI visible', 'info');
+          break;
+        case 'toggleFullscreen':
+          toggleFullscreen();
+          break;
+        case 'togglePause':
+          togglePause();
+          break;
+        case 'toggleMouseFollow':
+          setMouseFollow(prev => {
+            const newVal = !prev;
+            showToast(newVal ? 'Mouse follow ON' : 'Mouse follow OFF', 'info');
+            return newVal;
+          });
+          break;
+        case 'toggleWaveGrid':
+          setWaveGridEnabled(prev => {
+            const newVal = !prev;
+            showToast(newVal ? 'Wave grid ON' : 'Wave grid OFF', 'info');
+            return newVal;
+          });
+          break;
+        case 'palette1':
+        case 'palette2':
+        case 'palette3':
+        case 'palette4':
+        case 'palette5':
+        case 'palette6':
+          const paletteIndex = parseInt(shortcut.action.slice(-1)) - 1;
+          if (paletteNames[paletteIndex]) {
+            setColorPalette(paletteNames[paletteIndex]);
+            showToast(`Palette: ${paletteNames[paletteIndex]}`, 'success');
+          }
+          break;
+        case 'qualityUp':
+          adjustQuality(1);
+          break;
+        case 'qualityDown':
+          adjustQuality(-1);
+          break;
+        case 'resetCamera':
+          resetCamera();
+          showToast('Camera reset', 'info');
+          break;
+        case 'showHelp':
+          setShowHelp(prev => !prev);
+          break;
+        default:
+          break;
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [uiVisible, randomize, clearScene, resetCamera]);
+
+  // Sync paused state to ref
+  useEffect(() => {
+    pausedRef.current = paused;
+    if (clockRef.current) {
+      if (paused) {
+        clockRef.current.stop();
+      } else {
+        clockRef.current.start();
+      }
+    }
+  }, [paused]);
+
   // Update effects based on state changes
   useEffect(() => {
     if (composerRef.current && composerRef.current.passes[1]) {
@@ -3222,10 +3477,8 @@ function LuminousFlow() {
 
   // Clear scene
   const clearScene = useCallback(() => {
-    // Dispose all emitters
-    emittersRef.current.forEach(e => e.dispose());
-    emittersRef.current = [];
-    setEmitters([]);
+    // GPU particles remain active (managed separately)
+    // We only clear structures and ribbons
 
     // Dispose all structures
     structuresRef.current.forEach(s => s.dispose());
@@ -3283,6 +3536,127 @@ function LuminousFlow() {
     }
   }, []);
 
+  // Show toast notification
+  const showToast = useCallback((message, type = 'info') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
+    
+    // Auto-remove after 3 seconds
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3000);
+  }, []);
+
+  // Trigger manual pulse
+  const triggerManualPulse = useCallback(() => {
+    if (shockwaveManagerRef.current) {
+      shockwaveManagerRef.current.trigger(
+        new THREE.Vector3(0, 0, 0),
+        12.0,  // strength
+        3.0,   // thickness
+        8.0    // expansion speed
+      );
+      showToast('Pulse triggered!', 'success');
+    }
+  }, [showToast]);
+
+  // Toggle fullscreen
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(err => {
+        showToast('Could not enter fullscreen', 'error');
+      });
+      showToast('Fullscreen ON', 'info');
+    } else {
+      document.exitFullscreen();
+      showToast('Fullscreen OFF', 'info');
+    }
+  }, [showToast]);
+
+  // Toggle pause
+  const togglePause = useCallback(() => {
+    setPaused(prev => {
+      const newPaused = !prev;
+      showToast(newPaused ? 'Paused' : 'Resumed', 'info');
+      return newPaused;
+    });
+  }, [showToast]);
+
+  // Adjust quality
+  const adjustQuality = useCallback((direction) => {
+    const levels = ['ultra', 'high', 'medium', 'low', 'potato'];
+    const currentIdx = levels.indexOf(qualityLevel);
+    const newIdx = Math.max(0, Math.min(levels.length - 1, currentIdx - direction));
+    
+    if (newIdx !== currentIdx) {
+      setAutoQuality(false);
+      setQualityLevel(levels[newIdx]);
+      showToast(`Quality: ${levels[newIdx]}`, 'info');
+    }
+  }, [qualityLevel, showToast]);
+
+  // Load preset scene
+  const loadPreset = useCallback((presetName) => {
+    const preset = SCENE_PRESETS[presetName];
+    if (!preset) return;
+    
+    // Clear current scene
+    clearScene();
+    
+    // Apply preset settings
+    setColorPalette(preset.palette);
+    setBackgroundStyle(preset.background);
+    setTimeScale(preset.timeScale);
+    setBloomIntensity(preset.bloom);
+    setWaveGridEnabled(preset.waveGrid);
+    setWaveAmplitude(preset.waveAmplitude);
+    
+    // Add structures from preset
+    preset.structures.forEach((structConfig, i) => {
+      setTimeout(() => {
+        const config = {
+          type: structConfig.type,
+          position: new THREE.Vector3(...(structConfig.position || [0, 0, 0])),
+          rotationSpeed: {
+            x: (structConfig.rotationSpeed || 0.2) * 0.5,
+            y: structConfig.rotationSpeed || 0.2,
+            z: (structConfig.rotationSpeed || 0.2) * 0.25
+          },
+          scale: structConfig.scale || 1,
+          pulseIntensity: 0.1,
+          materialStyle: 'holographic',
+          complexity: 1,
+          color: COLOR_PALETTES[preset.palette].primary
+        };
+        
+        const structure = new GeometricStructure(sceneRef.current, config);
+        structuresRef.current.push(structure);
+        setStructures(prev => [...prev, { id: Date.now() + i, ...config }]);
+      }, i * 100);
+    });
+    
+    // Add ribbons from preset
+    preset.ribbons.forEach((ribbonConfig, i) => {
+      setTimeout(() => {
+        const config = {
+          type: ribbonConfig.type,
+          position: new THREE.Vector3(0, 0, 0),
+          animationSpeed: 1,
+          thickness: ribbonConfig.thickness || 0.08,
+          glowIntensity: 1.5,
+          color: COLOR_PALETTES[preset.palette].accent
+        };
+        
+        const ribbon = new LightRibbon(sceneRef.current, config);
+        ribbonsRef.current.push(ribbon);
+        setRibbons(prev => [...prev, { id: Date.now() + 100 + i, ...config }]);
+      }, (preset.structures.length + i) * 100);
+    });
+    
+    showToast(`Loaded: ${presetName}`, 'success');
+    setShowPresets(false);
+  }, [clearScene, showToast]);
+
   // Toggle section expansion
   const toggleSection = (section) => {
     setExpandedSections(prev => ({
@@ -3313,8 +3687,248 @@ function LuminousFlow() {
         }}
       />
 
-      {/* Control Panel */}
+      {/* Toast Notifications */}
       <div style={{
+        position: 'fixed',
+        bottom: '20px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 1000,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+        pointerEvents: 'none'
+      }}>
+        {toasts.map(toast => (
+          <div
+            key={toast.id}
+            style={{
+              padding: '12px 24px',
+              borderRadius: '8px',
+              background: toast.type === 'success' ? 'rgba(0, 200, 100, 0.9)'
+                : toast.type === 'error' ? 'rgba(200, 50, 50, 0.9)'
+                : 'rgba(50, 50, 70, 0.9)',
+              color: '#fff',
+              fontSize: '14px',
+              fontFamily: 'system-ui, -apple-system, sans-serif',
+              backdropFilter: 'blur(10px)',
+              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)',
+              animation: 'slideUp 0.3s ease-out',
+              pointerEvents: 'auto'
+            }}
+          >
+            {toast.message}
+          </div>
+        ))}
+      </div>
+
+      {/* Help Modal - Keyboard Shortcuts */}
+      {showHelp && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.8)',
+            backdropFilter: 'blur(5px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1001
+          }}
+          onClick={() => setShowHelp(false)}
+        >
+          <div
+            style={{
+              background: 'rgba(20, 20, 35, 0.95)',
+              borderRadius: '12px',
+              padding: '30px',
+              maxWidth: '500px',
+              width: '90%',
+              maxHeight: '80vh',
+              overflowY: 'auto',
+              boxShadow: '0 10px 40px rgba(0, 0, 0, 0.5)',
+              border: '1px solid rgba(255, 255, 255, 0.1)'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 style={{
+              margin: '0 0 20px 0',
+              fontSize: '20px',
+              fontWeight: '300',
+              letterSpacing: '2px',
+              color: '#fff',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
+            }}>
+              KEYBOARD SHORTCUTS
+            </h2>
+            <div style={{ display: 'grid', gap: '8px' }}>
+              {Object.entries(KEYBOARD_SHORTCUTS).map(([key, { description }]) => (
+                <div
+                  key={key}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '8px 12px',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    borderRadius: '6px'
+                  }}
+                >
+                  <span style={{
+                    fontSize: '13px',
+                    color: '#ccc',
+                    fontFamily: 'system-ui, -apple-system, sans-serif'
+                  }}>
+                    {description}
+                  </span>
+                  <kbd style={{
+                    padding: '4px 10px',
+                    background: 'rgba(255, 255, 255, 0.1)',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    fontFamily: 'monospace',
+                    color: '#00ffaa',
+                    border: '1px solid rgba(255, 255, 255, 0.2)'
+                  }}>
+                    {key === ' ' ? 'Space' : key}
+                  </kbd>
+                </div>
+              ))}
+            </div>
+            <p style={{
+              marginTop: '20px',
+              fontSize: '12px',
+              opacity: 0.5,
+              textAlign: 'center',
+              color: '#fff',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
+            }}>
+              Press ? or Escape to close
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Preset Gallery Modal */}
+      {showPresets && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.8)',
+            backdropFilter: 'blur(5px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1001
+          }}
+          onClick={() => setShowPresets(false)}
+        >
+          <div
+            style={{
+              background: 'rgba(20, 20, 35, 0.95)',
+              borderRadius: '12px',
+              padding: '30px',
+              maxWidth: '700px',
+              width: '90%',
+              maxHeight: '80vh',
+              overflowY: 'auto',
+              boxShadow: '0 10px 40px rgba(0, 0, 0, 0.5)',
+              border: '1px solid rgba(255, 255, 255, 0.1)'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 style={{
+              margin: '0 0 20px 0',
+              fontSize: '20px',
+              fontWeight: '300',
+              letterSpacing: '2px',
+              color: '#fff',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
+            }}>
+              SCENE PRESETS
+            </h2>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+              gap: '15px'
+            }}>
+              {Object.entries(SCENE_PRESETS).map(([name, preset]) => (
+                <button
+                  key={name}
+                  onClick={() => loadPreset(name)}
+                  style={{
+                    padding: '20px',
+                    background: `linear-gradient(135deg, ${COLOR_PALETTES[preset.palette]?.background[0] || '#1a1a2e'}, ${COLOR_PALETTES[preset.palette]?.background[1] || '#16213e'})`,
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    transition: 'all 0.2s',
+                    position: 'relative',
+                    overflow: 'hidden'
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.transform = 'scale(1.02)';
+                    e.currentTarget.style.borderColor = COLOR_PALETTES[preset.palette]?.primary || '#00ffaa';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.transform = 'scale(1)';
+                    e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                  }}
+                >
+                  <div style={{
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    color: COLOR_PALETTES[preset.palette]?.primary || '#00ffaa',
+                    marginBottom: '8px',
+                    fontFamily: 'system-ui, -apple-system, sans-serif'
+                  }}>
+                    {name}
+                  </div>
+                  <div style={{
+                    fontSize: '11px',
+                    color: '#aaa',
+                    lineHeight: '1.4',
+                    fontFamily: 'system-ui, -apple-system, sans-serif'
+                  }}>
+                    {preset.description}
+                  </div>
+                  <div style={{
+                    position: 'absolute',
+                    top: '10px',
+                    right: '10px',
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: COLOR_PALETTES[preset.palette]?.primary || '#00ffaa',
+                    boxShadow: `0 0 10px ${COLOR_PALETTES[preset.palette]?.primary || '#00ffaa'}`
+                  }} />
+                </button>
+              ))}
+            </div>
+            <p style={{
+              marginTop: '20px',
+              fontSize: '12px',
+              opacity: 0.5,
+              textAlign: 'center',
+              color: '#fff',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
+            }}>
+              Click a preset to load it, or click outside to close
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Control Panel - conditionally visible */}
+      {uiVisible && <div style={{
         position: 'absolute',
         top: 0,
         right: 0,
@@ -3755,9 +4369,91 @@ function LuminousFlow() {
           fontSize: '11px',
           borderTop: '1px solid rgba(255, 255, 255, 0.1)'
         }}>
-          Drag to orbit | Scroll to zoom
+          Drag to orbit | Scroll to zoom | Press ? for help
         </div>
-      </div>
+
+        {/* Preset Gallery Button */}
+        <div style={{
+          padding: '10px 20px 20px',
+          borderTop: '1px solid rgba(255, 255, 255, 0.1)'
+        }}>
+          <button
+            onClick={() => setShowPresets(true)}
+            style={{
+              ...buttonStyle,
+              width: '100%',
+              background: 'linear-gradient(135deg, rgba(0, 255, 170, 0.2), rgba(0, 170, 255, 0.2))',
+              border: '1px solid rgba(0, 255, 170, 0.4)'
+            }}
+          >
+            Open Preset Gallery
+          </button>
+        </div>
+      </div>}
+
+      {/* Hidden UI Buttons - visible when UI is hidden */}
+      {!uiVisible && (
+        <div style={{
+          position: 'absolute',
+          top: '20px',
+          right: '20px',
+          display: 'flex',
+          gap: '10px',
+          zIndex: 100
+        }}>
+          <button
+            onClick={() => setShowHelp(true)}
+            style={{
+              width: '40px',
+              height: '40px',
+              borderRadius: '50%',
+              background: 'rgba(10, 10, 20, 0.8)',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              color: '#fff',
+              fontSize: '18px',
+              cursor: 'pointer',
+              backdropFilter: 'blur(10px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+            title="Keyboard Shortcuts (?)"
+          >
+            ?
+          </button>
+          <button
+            onClick={() => setUiVisible(true)}
+            style={{
+              padding: '10px 20px',
+              borderRadius: '20px',
+              background: 'rgba(10, 10, 20, 0.8)',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              color: '#fff',
+              fontSize: '12px',
+              cursor: 'pointer',
+              backdropFilter: 'blur(10px)',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
+            }}
+            title="Show UI (H)"
+          >
+            Show UI
+          </button>
+        </div>
+      )}
+
+      {/* CSS Animation Keyframes */}
+      <style>{`
+        @keyframes slideUp {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+      `}</style>
     </div>
   );
 }

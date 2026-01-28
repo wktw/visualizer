@@ -999,7 +999,8 @@ class GPUParticleSystem {
         uColor2: { value: new THREE.Color(0x00aaff) },
         uColor3: { value: new THREE.Color(0xaa55ff) },
         uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
-        uSize: { value: 4.0 }
+        uSize: { value: 4.0 },
+        uColorMode: { value: 0 } // 0=speed, 1=direction, 2=acceleration
       },
       vertexShader: `
         uniform sampler2D texturePosition;
@@ -1007,12 +1008,20 @@ class GPUParticleSystem {
         uniform float uPixelRatio;
         uniform float uSize;
         uniform float uTime;
+        uniform int uColorMode; // 0=speed, 1=direction, 2=acceleration
 
         attribute vec2 reference;
 
         varying vec3 vColor;
         varying float vAlpha;
         varying float vLife;
+
+        // HSV to RGB conversion for direction-based coloring
+        vec3 hsv2rgb(vec3 c) {
+          vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+          vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+          return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+        }
 
         void main() {
           vec4 pos = texture2D(texturePosition, reference);
@@ -1025,9 +1034,28 @@ class GPUParticleSystem {
           vAlpha = smoothstep(0.0, 0.15, life) * smoothstep(1.0, 0.7, life);
           vLife = life;
 
-          // Speed-based color mixing
-          float colorMix = clamp(speed * 0.3, 0.0, 1.0);
-          vColor = mix(vec3(0.0, 1.0, 0.67), vec3(1.0, 0.4, 0.2), colorMix);
+          // Color based on mode
+          if (uColorMode == 1) {
+            // Direction-based: map velocity direction to hue
+            vec3 velDir = normalize(vel.xyz);
+            float hue = atan(velDir.z, velDir.x) / 6.28318 + 0.5;
+            float saturation = 0.8;
+            float value = 0.5 + speed * 0.3;
+            vColor = hsv2rgb(vec3(hue, saturation, value));
+          } else if (uColorMode == 2) {
+            // Acceleration-based: highlight changes
+            // Approximate acceleration by speed variation
+            float accelHighlight = smoothstep(2.0, 6.0, speed);
+            vColor = mix(
+              vec3(0.0, 0.5, 1.0), // Blue for low acceleration
+              vec3(1.0, 0.3, 0.0), // Orange for high acceleration
+              accelHighlight
+            );
+          } else {
+            // Speed-based (default)
+            float colorMix = clamp(speed * 0.3, 0.0, 1.0);
+            vColor = mix(vec3(0.0, 1.0, 0.67), vec3(1.0, 0.4, 0.2), colorMix);
+          }
 
           vec4 mvPosition = modelViewMatrix * vec4(pos.xyz, 1.0);
           gl_Position = projectionMatrix * mvPosition;
@@ -2626,6 +2654,16 @@ function LuminousFlow() {
   const mouseRef = useRef(new THREE.Vector2());
   const lastPulseTimeRef = useRef(0);
   
+  // Interactive structure refs
+  const selectedStructureRef = useRef(null);
+  const isDraggingStructureRef = useRef(false);
+  const dragOffsetRef = useRef(new THREE.Vector3());
+  
+  // Touch gesture refs
+  const touchStartRef = useRef(null);
+  const lastTouchTimeRef = useRef(0);
+  const touchGestureRef = useRef(null);
+  
   // Quality management refs
   const qualityManagerRef = useRef(null);
   
@@ -2673,10 +2711,21 @@ function LuminousFlow() {
   const [autoQuality, setAutoQuality] = useState(true);
   const [currentFps, setCurrentFps] = useState(60);
   const [particleCount, setParticleCount] = useState(65536);
+  
+  // Interactive structure state
+  const [selectedStructureIndex, setSelectedStructureIndex] = useState(null);
+  const [isDraggingStructure, setIsDraggingStructure] = useState(false);
+  
+  // Touch support state
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
 
   const [emitters, setEmitters] = useState([]);
   const [structures, setStructures] = useState([]);
   const [ribbons, setRibbons] = useState([]);
+  
+  // Attractor management state
+  const [attractors, setAttractors] = useState([]);
+  const [velocityColorMode, setVelocityColorMode] = useState('speed'); // 'speed', 'direction', 'acceleration'
 
   const [expandedSections, setExpandedSections] = useState({
     global: true,
@@ -2687,6 +2736,12 @@ function LuminousFlow() {
   });
 
   const [expandedItems, setExpandedItems] = useState({});
+
+  // Detect touch device on mount
+  useEffect(() => {
+    const hasTouchSupport = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    setIsTouchDevice(hasTouchSupport);
+  }, []);
 
   // Initialize Three.js scene
   useEffect(() => {
@@ -2874,6 +2929,26 @@ function LuminousFlow() {
       
       raycasterRef.current.setFromCamera(clickMouse, camera);
       
+      // Check for structure intersection first
+      const structureObjects = structuresRef.current
+        .map(s => s.group)
+        .filter(g => g && g.visible);
+      
+      const structureIntersects = raycasterRef.current.intersectObjects(structureObjects, true);
+      
+      if (structureIntersects.length > 0 && event.shiftKey) {
+        // Shift+Click on structure - select it
+        const intersectedGroup = structureIntersects[0].object.parent;
+        const structureIndex = structuresRef.current.findIndex(s => s.group === intersectedGroup);
+        
+        if (structureIndex !== -1) {
+          setSelectedStructureIndex(structureIndex);
+          selectedStructureRef.current = structureIndex;
+          showToast(`Selected ${structures[structureIndex]?.type || 'structure'}`, 'info');
+          return;
+        }
+      }
+      
       // Find intersection with a plane at z=0
       const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
       const intersectPoint = new THREE.Vector3();
@@ -2885,9 +2960,213 @@ function LuminousFlow() {
       }
     };
     
+    // Handle mouse down for structure dragging
+    const handleMouseDown = (event) => {
+      if (selectedStructureRef.current !== null) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        
+        raycasterRef.current.setFromCamera(mouse, camera);
+        
+        const structureIndex = selectedStructureRef.current;
+        if (structuresRef.current[structureIndex]) {
+          const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+          const intersectPoint = new THREE.Vector3();
+          raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+          
+          if (intersectPoint) {
+            isDraggingStructureRef.current = true;
+            setIsDraggingStructure(true);
+            
+            const structurePos = structuresRef.current[structureIndex].group.position;
+            dragOffsetRef.current.copy(intersectPoint).sub(structurePos);
+          }
+        }
+      }
+    };
+    
+    // Handle mouse up to stop dragging
+    const handleMouseUp = (event) => {
+      if (isDraggingStructureRef.current) {
+        isDraggingStructureRef.current = false;
+        setIsDraggingStructure(false);
+      }
+    };
+    
+    // Handle mouse move for dragging
+    const handleMouseMoveForDrag = (event) => {
+      if (isDraggingStructureRef.current && selectedStructureRef.current !== null) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        
+        raycasterRef.current.setFromCamera(mouse, camera);
+        
+        const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        const intersectPoint = new THREE.Vector3();
+        raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+        
+        if (intersectPoint && structuresRef.current[selectedStructureRef.current]) {
+          const newPos = intersectPoint.sub(dragOffsetRef.current);
+          structuresRef.current[selectedStructureRef.current].group.position.copy(newPos);
+          
+          // Update state
+          setStructures(prev => prev.map((s, i) =>
+            i === selectedStructureRef.current
+              ? { ...s, position: newPos }
+              : s
+          ));
+        }
+      }
+    };
+    
+    // Touch event handlers
+    const handleTouchStart = (event) => {
+      const touch = event.touches[0];
+      const now = Date.now();
+      
+      touchStartRef.current = {
+        x: touch.clientX,
+        y: touch.clientY,
+        time: now
+      };
+      
+      // Check for double tap
+      if (now - lastTouchTimeRef.current < 300) {
+        // Double tap detected
+        const rect = renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((touch.clientX - rect.left) / rect.width) * 2 - 1,
+          -((touch.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        
+        raycasterRef.current.setFromCamera(mouse, camera);
+        const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        const intersectPoint = new THREE.Vector3();
+        raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+        
+        if (intersectPoint) {
+          // Add structure at double-tap location
+          addStructure();
+          showToast('Structure added', 'success');
+        }
+      }
+      
+      lastTouchTimeRef.current = now;
+      
+      // Handle multi-touch
+      if (event.touches.length === 2) {
+        touchGestureRef.current = {
+          type: 'pinch',
+          startDistance: Math.hypot(
+            event.touches[0].clientX - event.touches[1].clientX,
+            event.touches[0].clientY - event.touches[1].clientY
+          )
+        };
+      } else if (event.touches.length === 3) {
+        touchGestureRef.current = { type: 'three-finger' };
+      }
+    };
+    
+    const handleTouchMove = (event) => {
+      event.preventDefault();
+      
+      if (event.touches.length === 1) {
+        // Single touch - move mouse attractor
+        const touch = event.touches[0];
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouseRef.current.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
+        mouseRef.current.y = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
+        
+        raycasterRef.current.setFromCamera(mouseRef.current, camera);
+        const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        const intersectPoint = new THREE.Vector3();
+        raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+        
+        if (mouseAttractorRef.current && intersectPoint) {
+          mouseAttractorRef.current.setPosition(intersectPoint);
+        }
+      } else if (event.touches.length === 2 && touchGestureRef.current?.type === 'pinch') {
+        // Two-finger pinch - handled by OrbitControls
+      }
+    };
+    
+    const handleTouchEnd = (event) => {
+      if (!touchStartRef.current) return;
+      
+      const duration = Date.now() - touchStartRef.current.time;
+      
+      // Long press detection
+      if (duration > 500 && event.changedTouches.length === 1) {
+        const touch = event.changedTouches[0];
+        const rect = renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((touch.clientX - rect.left) / rect.width) * 2 - 1,
+          -((touch.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        
+        raycasterRef.current.setFromCamera(mouse, camera);
+        const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        const intersectPoint = new THREE.Vector3();
+        raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+        
+        if (intersectPoint && shockwaveManagerRef.current) {
+          shockwaveManagerRef.current.trigger(intersectPoint, 15.0, 2.5, 10.0);
+          showToast('Shockwave triggered', 'success');
+        }
+      }
+      
+      // Swipe detection
+      if (touchStartRef.current && event.changedTouches.length === 1) {
+        const touch = event.changedTouches[0];
+        const deltaX = touch.clientX - touchStartRef.current.x;
+        const deltaY = touch.clientY - touchStartRef.current.y;
+        
+        if (Math.abs(deltaX) > 100 && Math.abs(deltaY) < 50 && duration < 300) {
+          // Horizontal swipe
+          const palettes = Object.keys(COLOR_PALETTES);
+          const currentIdx = palettes.indexOf(colorPalette);
+          
+          if (deltaX > 0 && currentIdx > 0) {
+            // Swipe right - previous palette
+            setColorPalette(palettes[currentIdx - 1]);
+            showToast(`Palette: ${palettes[currentIdx - 1]}`, 'success');
+          } else if (deltaX < 0 && currentIdx < palettes.length - 1) {
+            // Swipe left - next palette
+            setColorPalette(palettes[currentIdx + 1]);
+            showToast(`Palette: ${palettes[currentIdx + 1]}`, 'success');
+          }
+        }
+      }
+      
+      // Three-finger swipe to toggle UI
+      if (touchGestureRef.current?.type === 'three-finger' && event.changedTouches.length === 3) {
+        setUiVisible(prev => !prev);
+        showToast(uiVisible ? 'UI hidden' : 'UI visible', 'info');
+      }
+      
+      touchStartRef.current = null;
+      touchGestureRef.current = null;
+    };
+    
     // Add event listeners
     renderer.domElement.addEventListener('mousemove', handleMouseMove);
+    renderer.domElement.addEventListener('mousemove', handleMouseMoveForDrag);
+    renderer.domElement.addEventListener('mousedown', handleMouseDown);
+    renderer.domElement.addEventListener('mouseup', handleMouseUp);
     renderer.domElement.addEventListener('click', handleClick);
+    
+    // Touch event listeners
+    if (isTouchDevice) {
+      renderer.domElement.addEventListener('touchstart', handleTouchStart, { passive: false });
+      renderer.domElement.addEventListener('touchmove', handleTouchMove, { passive: false });
+      renderer.domElement.addEventListener('touchend', handleTouchEnd);
+    }
 
     // Handle resize
     const handleResize = () => {
@@ -3022,7 +3301,17 @@ function LuminousFlow() {
     return () => {
       window.removeEventListener('resize', handleResize);
       renderer.domElement.removeEventListener('mousemove', handleMouseMove);
+      renderer.domElement.removeEventListener('mousemove', handleMouseMoveForDrag);
+      renderer.domElement.removeEventListener('mousedown', handleMouseDown);
+      renderer.domElement.removeEventListener('mouseup', handleMouseUp);
       renderer.domElement.removeEventListener('click', handleClick);
+      
+      // Touch event cleanup
+      if (isTouchDevice) {
+        renderer.domElement.removeEventListener('touchstart', handleTouchStart);
+        renderer.domElement.removeEventListener('touchmove', handleTouchMove);
+        renderer.domElement.removeEventListener('touchend', handleTouchEnd);
+      }
       
       if (animationIdRef.current) {
         cancelAnimationFrame(animationIdRef.current);
@@ -3276,6 +3565,14 @@ function LuminousFlow() {
       waveGridRef.current.setWaveParams(waveAmplitude, 0.5, waveSpeed);
     }
   }, [waveAmplitude, waveSpeed]);
+  
+  // Update velocity color mode
+  useEffect(() => {
+    if (gpuParticlesRef.current && gpuParticlesRef.current.particles) {
+      const colorModeMap = { 'speed': 0, 'direction': 1, 'acceleration': 2 };
+      gpuParticlesRef.current.particles.material.uniforms.uColorMode.value = colorModeMap[velocityColorMode] || 0;
+    }
+  }, [velocityColorMode]);
 
   // Apply color palette
   useEffect(() => {
@@ -3379,6 +3676,39 @@ function LuminousFlow() {
     // Replaced by GPU particle system
   }, []);
   */
+
+  // Attractor management functions
+  const addAttractor = useCallback((type = 'point') => {
+    const newAttractor = new Attractor(
+      new THREE.Vector3(
+        (Math.random() - 0.5) * 4,
+        (Math.random() - 0.5) * 4,
+        (Math.random() - 0.5) * 4
+      ),
+      type === 'repulsor' ? -5.0 : 5.0,
+      type
+    );
+    
+    setAttractors(prev => [...prev, {
+      id: Date.now(),
+      type,
+      position: newAttractor.position.clone(),
+      strength: newAttractor.strength,
+      radius: newAttractor.radius
+    }]);
+    
+    showToast(`${type.charAt(0).toUpperCase() + type.slice(1)} attractor added`, 'success');
+  }, [showToast]);
+  
+  const removeAttractor = useCallback((index) => {
+    setAttractors(prev => prev.filter((_, i) => i !== index));
+  }, []);
+  
+  const updateAttractor = useCallback((index, key, value) => {
+    setAttractors(prev => prev.map((a, i) =>
+      i === index ? { ...a, [key]: value } : a
+    ));
+  }, []);
 
   // Add structure
   const addStructure = useCallback((type = 'icosahedron') => {
@@ -4225,6 +4555,189 @@ function LuminousFlow() {
               )}
             </div>
           </div>
+          
+          {/* Attractor Management */}
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            background: 'rgba(170, 255, 0, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(170, 255, 0, 0.3)'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#aaff00'
+            }}>
+              Attractors ({attractors.length})
+            </div>
+            
+            <div style={{ display: 'flex', gap: '5px', marginBottom: '10px', flexWrap: 'wrap' }}>
+              <button onClick={() => addAttractor('point')} style={{ ...buttonStyle, flex: '1 1 45%', fontSize: '10px', padding: '6px' }}>
+                + Point
+              </button>
+              <button onClick={() => addAttractor('vortex')} style={{ ...buttonStyle, flex: '1 1 45%', fontSize: '10px', padding: '6px' }}>
+                + Vortex
+              </button>
+              <button onClick={() => addAttractor('orbit')} style={{ ...buttonStyle, flex: '1 1 45%', fontSize: '10px', padding: '6px' }}>
+                + Orbit
+              </button>
+              <button onClick={() => addAttractor('repulsor')} style={{ ...buttonStyle, flex: '1 1 45%', fontSize: '10px', padding: '6px' }}>
+                + Repulsor
+              </button>
+            </div>
+            
+            {attractors.map((attractor, index) => (
+              <div key={attractor.id} style={{
+                padding: '8px',
+                background: 'rgba(0, 0, 0, 0.3)',
+                borderRadius: '4px',
+                marginBottom: '6px'
+              }}>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: '6px'
+                }}>
+                  <span style={{ fontSize: '11px', textTransform: 'capitalize' }}>{attractor.type}</span>
+                  <button
+                    onClick={() => removeAttractor(index)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#ff6666',
+                      cursor: 'pointer',
+                      padding: '0',
+                      fontSize: '14px'
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+                <Slider
+                  label="Strength"
+                  value={attractor.strength}
+                  onChange={(v) => updateAttractor(index, 'strength', v)}
+                  min={-10} max={10} step={0.5}
+                />
+              </div>
+            ))}
+            
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              Add attractors to create force fields. Point attracts, Vortex spins, Orbit maintains distance, Repulsor pushes away.
+            </div>
+          </div>
+          
+          {/* Velocity Coloring */}
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            background: 'rgba(255, 100, 200, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(255, 100, 200, 0.3)'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#ff64c8'
+            }}>
+              Velocity Coloring
+            </div>
+            
+            <Select
+              label="Color Mode"
+              value={velocityColorMode}
+              onChange={setVelocityColorMode}
+              options={['speed', 'direction', 'acceleration']}
+            />
+            
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              Speed: color by velocity magnitude<br/>
+              Direction: hue based on movement direction<br/>
+              Acceleration: highlight sudden changes
+            </div>
+          </div>
+          
+          {/* Interactive Structures Info */}
+          {selectedStructureIndex !== null && (
+            <div style={{
+              marginTop: '12px',
+              padding: '12px',
+              background: 'rgba(255, 200, 0, 0.1)',
+              borderRadius: '4px',
+              border: '1px solid rgba(255, 200, 0, 0.3)'
+            }}>
+              <div style={{
+                fontSize: '12px',
+                fontWeight: '500',
+                marginBottom: '6px',
+                color: '#ffc800'
+              }}>
+                Selected: {structures[selectedStructureIndex]?.type || 'Structure'}
+              </div>
+              <div style={{
+                fontSize: '10px',
+                opacity: 0.8,
+                lineHeight: '1.4'
+              }}>
+                Drag to move • Shift+Click to select<br/>
+                Click elsewhere to deselect
+              </div>
+              <button
+                onClick={() => {
+                  setSelectedStructureIndex(null);
+                  selectedStructureRef.current = null;
+                }}
+                style={{ ...buttonStyle, width: '100%', marginTop: '8px', fontSize: '11px' }}
+              >
+                Deselect
+              </button>
+            </div>
+          )}
+          
+          {/* Touch Device Info */}
+          {isTouchDevice && (
+            <div style={{
+              marginTop: '12px',
+              padding: '12px',
+              background: 'rgba(0, 200, 255, 0.1)',
+              borderRadius: '4px',
+              border: '1px solid rgba(0, 200, 255, 0.3)'
+            }}>
+              <div style={{
+                fontSize: '12px',
+                fontWeight: '500',
+                marginBottom: '6px',
+                color: '#00c8ff'
+              }}>
+                Touch Gestures
+              </div>
+              <div style={{
+                fontSize: '10px',
+                opacity: 0.8,
+                lineHeight: '1.6'
+              }}>
+                • Tap: Shockwave<br/>
+                • Double-tap: Add structure<br/>
+                • Long press: Strong shockwave<br/>
+                • Swipe left/right: Change palette<br/>
+                • 3-finger swipe: Toggle UI
+              </div>
+            </div>
+          )}
         </Section>
 
         {/* Structures Section */}

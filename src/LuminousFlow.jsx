@@ -1369,6 +1369,177 @@ class WaveGrid {
 }
 
 // ============================================================================
+// QUALITY MANAGER CLASS - Adaptive Performance System
+// ============================================================================
+class QualityManager {
+  constructor(onQualityChange) {
+    this.frameHistory = [];
+    this.historyLength = 60;  // Track 60 frames (~1 second at 60fps)
+    this.currentQuality = 'high';
+    this.onQualityChange = onQualityChange;
+    this.cooldown = 0;
+    this.enabled = true;
+    this.lastFps = 60;
+    
+    // Quality presets with particle counts and effect settings
+    this.presets = {
+      ultra: {
+        particleSize: 512,    // 262,144 particles
+        waveSize: 192,        // 36,864 wave particles
+        bloom: true,
+        bloomStrength: 2.0,
+        chromatic: true,
+        filmGrain: true,
+        fxaa: true,
+        targetFps: 55
+      },
+      high: {
+        particleSize: 384,    // 147,456 particles
+        waveSize: 128,        // 16,384 wave particles
+        bloom: true,
+        bloomStrength: 1.5,
+        chromatic: true,
+        filmGrain: true,
+        fxaa: true,
+        targetFps: 50
+      },
+      medium: {
+        particleSize: 256,    // 65,536 particles
+        waveSize: 96,         // 9,216 wave particles
+        bloom: true,
+        bloomStrength: 1.2,
+        chromatic: false,
+        filmGrain: false,
+        fxaa: true,
+        targetFps: 40
+      },
+      low: {
+        particleSize: 192,    // 36,864 particles
+        waveSize: 64,         // 4,096 wave particles
+        bloom: true,
+        bloomStrength: 1.0,
+        chromatic: false,
+        filmGrain: false,
+        fxaa: false,
+        targetFps: 30
+      },
+      potato: {
+        particleSize: 128,    // 16,384 particles
+        waveSize: 48,         // 2,304 wave particles
+        bloom: false,
+        bloomStrength: 0,
+        chromatic: false,
+        filmGrain: false,
+        fxaa: false,
+        targetFps: 25
+      }
+    };
+    
+    this.qualityLevels = ['ultra', 'high', 'medium', 'low', 'potato'];
+  }
+  
+  update(deltaTime) {
+    if (!this.enabled) return null;
+    
+    // Calculate FPS
+    const fps = deltaTime > 0 ? Math.min(1 / deltaTime, 120) : 60;
+    this.frameHistory.push(fps);
+    
+    // Keep history at target length
+    if (this.frameHistory.length > this.historyLength) {
+      this.frameHistory.shift();
+    }
+    
+    // Update cooldown
+    this.cooldown -= deltaTime;
+    
+    // Only evaluate after collecting enough samples and cooldown elapsed
+    if (this.frameHistory.length === this.historyLength && this.cooldown <= 0) {
+      const avgFps = this.frameHistory.reduce((a, b) => a + b, 0) / this.historyLength;
+      this.lastFps = avgFps;
+      
+      const currentPreset = this.presets[this.currentQuality];
+      
+      // Check if we need to decrease quality (struggling to hit target)
+      if (avgFps < currentPreset.targetFps - 10 && this.currentQuality !== 'potato') {
+        return this.decreaseQuality();
+      }
+      
+      // Check if we can increase quality (running well above target)
+      if (avgFps > 58 && this.currentQuality !== 'ultra') {
+        return this.increaseQuality();
+      }
+    }
+    
+    return null;
+  }
+  
+  decreaseQuality() {
+    const idx = this.qualityLevels.indexOf(this.currentQuality);
+    if (idx < this.qualityLevels.length - 1) {
+      this.currentQuality = this.qualityLevels[idx + 1];
+      this.cooldown = 3.0; // Wait 3 seconds before next change
+      this.frameHistory = []; // Reset history after change
+      
+      if (this.onQualityChange) {
+        this.onQualityChange(this.currentQuality, this.presets[this.currentQuality]);
+      }
+      
+      return { quality: this.currentQuality, preset: this.presets[this.currentQuality], direction: 'decrease' };
+    }
+    return null;
+  }
+  
+  increaseQuality() {
+    const idx = this.qualityLevels.indexOf(this.currentQuality);
+    if (idx > 0) {
+      this.currentQuality = this.qualityLevels[idx - 1];
+      this.cooldown = 5.0; // Wait 5 seconds before increasing again
+      this.frameHistory = []; // Reset history after change
+      
+      if (this.onQualityChange) {
+        this.onQualityChange(this.currentQuality, this.presets[this.currentQuality]);
+      }
+      
+      return { quality: this.currentQuality, preset: this.presets[this.currentQuality], direction: 'increase' };
+    }
+    return null;
+  }
+  
+  setQuality(qualityLevel) {
+    if (this.qualityLevels.includes(qualityLevel)) {
+      this.currentQuality = qualityLevel;
+      this.frameHistory = [];
+      this.cooldown = 2.0;
+      
+      if (this.onQualityChange) {
+        this.onQualityChange(this.currentQuality, this.presets[this.currentQuality]);
+      }
+      
+      return this.presets[this.currentQuality];
+    }
+    return null;
+  }
+  
+  setEnabled(enabled) {
+    this.enabled = enabled;
+  }
+  
+  getCurrentPreset() {
+    return this.presets[this.currentQuality];
+  }
+  
+  getStats() {
+    return {
+      quality: this.currentQuality,
+      fps: Math.round(this.lastFps),
+      particleCount: Math.pow(this.presets[this.currentQuality].particleSize, 2),
+      cooldown: Math.max(0, this.cooldown).toFixed(1)
+    };
+  }
+}
+
+// ============================================================================
 // GEOMETRIC STRUCTURE CLASS
 // ============================================================================
 class GeometricStructure {
@@ -2332,6 +2503,9 @@ function LuminousFlow() {
   const mouseRef = useRef(new THREE.Vector2());
   const lastPulseTimeRef = useRef(0);
   
+  // Quality management refs
+  const qualityManagerRef = useRef(null);
+  
   // Refs for state values accessible in animation loop
   const mouseFollowRef = useRef(true);
   const autoPulseRef = useRef(true);
@@ -2361,6 +2535,12 @@ function LuminousFlow() {
   const [waveGridEnabled, setWaveGridEnabled] = useState(true);
   const [waveAmplitude, setWaveAmplitude] = useState(1.0);
   const [waveSpeed, setWaveSpeed] = useState(1.0);
+  
+  // Quality system state
+  const [qualityLevel, setQualityLevel] = useState('high');
+  const [autoQuality, setAutoQuality] = useState(true);
+  const [currentFps, setCurrentFps] = useState(60);
+  const [particleCount, setParticleCount] = useState(65536);
 
   const [emitters, setEmitters] = useState([]);
   const [structures, setStructures] = useState([]);
@@ -2485,6 +2665,31 @@ function LuminousFlow() {
     // Initialize Mouse Attractor
     const mouseAttractor = new Attractor(new THREE.Vector3(0, 0, 0), 8.0, 'point');
     mouseAttractorRef.current = mouseAttractor;
+    
+    // Initialize Quality Manager with callback for quality changes
+    const qualityManager = new QualityManager((quality, preset) => {
+      console.log(`Quality changed to: ${quality}`, preset);
+      setQualityLevel(quality);
+      setParticleCount(preset.particleSize * preset.particleSize);
+      
+      // Apply post-processing settings based on preset
+      if (bloomPassRef.current) {
+        bloomPassRef.current.enabled = preset.bloom;
+        if (preset.bloom) {
+          bloomPassRef.current.strength = preset.bloomStrength;
+        }
+      }
+      if (chromaticAberrationPassRef.current) {
+        chromaticAberrationPassRef.current.enabled = preset.chromatic;
+      }
+      if (filmGrainPassRef.current) {
+        filmGrainPassRef.current.enabled = preset.filmGrain;
+      }
+      if (fxaaPassRef.current) {
+        fxaaPassRef.current.enabled = preset.fxaa;
+      }
+    });
+    qualityManagerRef.current = qualityManager;
     
     // Initialize Wave Grid
     const palette = COLOR_PALETTES['Northern Lights'];
@@ -2657,6 +2862,17 @@ function LuminousFlow() {
         chromaticAberrationPassRef.current.uniforms.uTime.value = elapsedTime;
       }
 
+      // Update quality manager (adaptive FPS-based quality adjustment)
+      if (qualityManagerRef.current && autoQuality) {
+        qualityManagerRef.current.update(deltaTime);
+        
+        // Update FPS display periodically (every half second)
+        if (Math.floor(elapsedTime * 2) % 1 === 0) {
+          const stats = qualityManagerRef.current.getStats();
+          setCurrentFps(stats.fps);
+        }
+      }
+
       // Immersion mode camera drift
       if (immersionMode && cameraRef.current) {
         const drift = Math.sin(elapsedTime * 0.2) * 0.5;
@@ -2782,6 +2998,23 @@ function LuminousFlow() {
       waveGridRef.current.setVisible(waveGridEnabled);
     }
   }, [waveGridEnabled]);
+  
+  // Quality system effects
+  useEffect(() => {
+    if (qualityManagerRef.current) {
+      qualityManagerRef.current.setEnabled(autoQuality);
+    }
+  }, [autoQuality]);
+  
+  // Manual quality level change
+  useEffect(() => {
+    if (qualityManagerRef.current && !autoQuality) {
+      const preset = qualityManagerRef.current.setQuality(qualityLevel);
+      if (preset) {
+        setParticleCount(preset.particleSize * preset.particleSize);
+      }
+    }
+  }, [qualityLevel, autoQuality]);
   
   useEffect(() => {
     if (waveGridRef.current) {
@@ -3315,6 +3548,67 @@ function LuminousFlow() {
               lineHeight: '1.4'
             }}>
               16,384 particles in undulating grid below the scene
+            </div>
+          </div>
+          
+          {/* Performance / Quality Controls */}
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            background: 'rgba(170, 85, 255, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(170, 85, 255, 0.3)'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#aa55ff'
+            }}>
+              Performance
+            </div>
+            
+            {/* FPS and Quality Display */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              padding: '8px',
+              background: 'rgba(0, 0, 0, 0.3)',
+              borderRadius: '4px',
+              marginBottom: '10px',
+              fontSize: '11px'
+            }}>
+              <span>FPS: <strong style={{ color: currentFps > 50 ? '#00ff88' : currentFps > 30 ? '#ffaa00' : '#ff4444' }}>{currentFps}</strong></span>
+              <span>Quality: <strong style={{ color: '#aa55ff', textTransform: 'capitalize' }}>{qualityLevel}</strong></span>
+              <span>Particles: <strong>{(particleCount / 1000).toFixed(0)}K</strong></span>
+            </div>
+            
+            <Checkbox
+              label="Auto Quality (adjusts based on FPS)"
+              checked={autoQuality}
+              onChange={setAutoQuality}
+            />
+            
+            {!autoQuality && (
+              <Select
+                label="Quality Level"
+                value={qualityLevel}
+                onChange={setQualityLevel}
+                options={['ultra', 'high', 'medium', 'low', 'potato']}
+              />
+            )}
+            
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              {autoQuality ? (
+                <>Auto mode adjusts quality based on FPS. Target: 50-60fps.</>
+              ) : (
+                <>Manual mode lets you choose quality level. Higher = more particles and effects.</>
+              )}
             </div>
           </div>
         </Section>

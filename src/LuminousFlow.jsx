@@ -527,6 +527,17 @@ class GPUParticleSystem {
     this.velocityUniforms.uAttractorStrength = { value: 3.0 };
     this.velocityUniforms.uNoiseScale = { value: 0.5 };
     this.velocityUniforms.uNoiseSpeed = { value: 0.2 };
+    
+    // Mouse attractor uniforms
+    this.velocityUniforms.uMouseAttractorPos = { value: new THREE.Vector3(0, 0, 0) };
+    this.velocityUniforms.uMouseAttractorStrength = { value: 0.0 };
+    this.velocityUniforms.uMouseAttractorActive = { value: 0.0 };
+    
+    // Shockwave uniforms
+    this.velocityUniforms.uShockwaveOrigin = { value: new THREE.Vector3(0, 0, 0) };
+    this.velocityUniforms.uShockwaveRadius = { value: 0.0 };
+    this.velocityUniforms.uShockwaveStrength = { value: 0.0 };
+    this.velocityUniforms.uShockwaveThickness = { value: 2.0 };
 
     // Initialize
     const error = this.gpuCompute.init();
@@ -605,6 +616,17 @@ class GPUParticleSystem {
       uniform float uAttractorStrength;
       uniform float uNoiseScale;
       uniform float uNoiseSpeed;
+      
+      // Mouse attractor uniforms
+      uniform vec3 uMouseAttractorPos;
+      uniform float uMouseAttractorStrength;
+      uniform float uMouseAttractorActive;
+      
+      // Shockwave uniforms
+      uniform vec3 uShockwaveOrigin;
+      uniform float uShockwaveRadius;
+      uniform float uShockwaveStrength;
+      uniform float uShockwaveThickness;
 
       // Simplex noise functions
       vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
@@ -695,11 +717,53 @@ class GPUParticleSystem {
 
         vec3 acceleration = vec3(0.0);
 
-        // Attractor force
+        // Central attractor force
         vec3 toAttractor = uAttractorPos - pos.xyz;
         float dist = length(toAttractor);
         if (dist > 0.1) {
           acceleration += normalize(toAttractor) * uAttractorStrength / (dist * dist + 1.0);
+        }
+        
+        // Mouse attractor force (when active)
+        if (uMouseAttractorActive > 0.5) {
+          vec3 toMouse = uMouseAttractorPos - pos.xyz;
+          float mouseDist = length(toMouse);
+          if (mouseDist > 0.1) {
+            // Smooth falloff for mouse attractor
+            float falloff = 1.0 / (mouseDist * mouseDist * 0.5 + 1.0);
+            acceleration += normalize(toMouse) * uMouseAttractorStrength * falloff;
+          }
+        }
+        
+        // Shockwave force - spherical expanding wave
+        if (uShockwaveStrength > 0.01) {
+          vec3 toParticle = pos.xyz - uShockwaveOrigin;
+          float particleDist = length(toParticle);
+          
+          // Calculate distance from shockwave shell
+          float shellDist = abs(particleDist - uShockwaveRadius);
+          
+          // Particles within the shockwave thickness are affected
+          if (shellDist < uShockwaveThickness) {
+            // Falloff based on distance from shell center
+            float shellFalloff = 1.0 - (shellDist / uShockwaveThickness);
+            shellFalloff = shellFalloff * shellFalloff; // Quadratic falloff
+            
+            // Push particles outward from shockwave origin
+            vec3 pushDir = normalize(toParticle);
+            
+            // Add tangential swirl for more interesting motion
+            vec3 tangent = normalize(cross(pushDir, vec3(0.0, 1.0, 0.0)));
+            if (length(tangent) < 0.1) {
+              tangent = normalize(cross(pushDir, vec3(1.0, 0.0, 0.0)));
+            }
+            
+            // Combine radial push with slight swirl
+            vec3 shockForce = pushDir * uShockwaveStrength * shellFalloff;
+            shockForce += tangent * uShockwaveStrength * shellFalloff * 0.3;
+            
+            acceleration += shockForce;
+          }
         }
 
         // Curl noise for organic movement
@@ -713,10 +777,11 @@ class GPUParticleSystem {
         // Damping
         vel.xyz *= 0.98;
 
-        // Speed limit
+        // Speed limit (increased to allow shockwave bursts)
         float speed = length(vel.xyz);
-        if (speed > 5.0) {
-          vel.xyz = normalize(vel.xyz) * 5.0;
+        float maxSpeed = 8.0;
+        if (speed > maxSpeed) {
+          vel.xyz = normalize(vel.xyz) * maxSpeed;
         }
 
         // Reset velocity if particle respawned
@@ -863,6 +928,19 @@ class GPUParticleSystem {
     this.velocityUniforms.uAttractorStrength.value = strength;
   }
 
+  setMouseAttractor(position, strength, active) {
+    this.velocityUniforms.uMouseAttractorPos.value.copy(position);
+    this.velocityUniforms.uMouseAttractorStrength.value = strength;
+    this.velocityUniforms.uMouseAttractorActive.value = active ? 1.0 : 0.0;
+  }
+
+  setShockwave(origin, radius, strength, thickness) {
+    this.velocityUniforms.uShockwaveOrigin.value.copy(origin);
+    this.velocityUniforms.uShockwaveRadius.value = radius;
+    this.velocityUniforms.uShockwaveStrength.value = strength;
+    this.velocityUniforms.uShockwaveThickness.value = thickness;
+  }
+
   setColors(color1, color2, color3) {
     this.particles.material.uniforms.uColor1.value.set(color1);
     this.particles.material.uniforms.uColor2.value.set(color2);
@@ -874,6 +952,104 @@ class GPUParticleSystem {
     this.particles.material.dispose();
     this.scene.remove(this.particles);
     // GPUComputationRenderer doesn't have a dispose method, but textures are managed internally
+  }
+}
+
+// ============================================================================
+// ATTRACTOR CLASS
+// ============================================================================
+class Attractor {
+  constructor(position, strength, type = 'point') {
+    this.position = position.clone();
+    this.strength = strength; // positive = attract, negative = repel
+    this.type = type; // 'point', 'vortex', 'orbit'
+    this.active = true;
+    this.radius = 3.0; // for orbit type
+    this.vortexAxis = new THREE.Vector3(0, 1, 0); // for vortex type
+  }
+
+  setPosition(position) {
+    this.position.copy(position);
+  }
+
+  toUniformData() {
+    return {
+      position: this.position,
+      strength: this.active ? this.strength : 0,
+      type: this.type === 'point' ? 0 : (this.type === 'vortex' ? 1 : 2),
+      radius: this.radius
+    };
+  }
+}
+
+// ============================================================================
+// SHOCKWAVE MANAGER CLASS
+// ============================================================================
+class ShockwaveManager {
+  constructor(maxShockwaves = 5) {
+    this.shockwaves = [];
+    this.maxShockwaves = maxShockwaves;
+  }
+
+  trigger(origin, strength = 10.0, thickness = 2.0, expansionSpeed = 8.0) {
+    // Remove oldest if at max
+    if (this.shockwaves.length >= this.maxShockwaves) {
+      this.shockwaves.shift();
+    }
+
+    this.shockwaves.push({
+      origin: origin.clone(),
+      radius: 0.1,
+      strength: strength,
+      thickness: thickness,
+      expansionSpeed: expansionSpeed,
+      decay: 0.92,
+      active: true
+    });
+  }
+
+  update(deltaTime) {
+    for (let i = this.shockwaves.length - 1; i >= 0; i--) {
+      const sw = this.shockwaves[i];
+
+      sw.radius += sw.expansionSpeed * deltaTime;
+      sw.strength *= sw.decay;
+
+      // Remove when too weak or too large
+      if (sw.radius > 25 || sw.strength < 0.05) {
+        this.shockwaves.splice(i, 1);
+      }
+    }
+  }
+
+  getActiveShockwave() {
+    // Return the strongest active shockwave for the shader
+    if (this.shockwaves.length === 0) {
+      return {
+        origin: new THREE.Vector3(0, 0, 0),
+        radius: 0,
+        strength: 0,
+        thickness: 1
+      };
+    }
+
+    // Find strongest
+    let strongest = this.shockwaves[0];
+    for (const sw of this.shockwaves) {
+      if (sw.strength > strongest.strength) {
+        strongest = sw;
+      }
+    }
+
+    return strongest;
+  }
+
+  hasActive() {
+    return this.shockwaves.length > 0;
+  }
+
+  clear() {
+    this.shockwaves = [];
   }
 }
 
@@ -1804,6 +1980,18 @@ function LuminousFlow() {
   const ribbonsRef = useRef([]);
   const backgroundRef = useRef(null);
   const filmGrainPassRef = useRef(null);
+  
+  // Shockwave and interaction refs
+  const shockwaveManagerRef = useRef(null);
+  const mouseAttractorRef = useRef(null);
+  const raycasterRef = useRef(new THREE.Raycaster());
+  const mouseRef = useRef(new THREE.Vector2());
+  const lastPulseTimeRef = useRef(0);
+  
+  // Refs for state values accessible in animation loop
+  const mouseFollowRef = useRef(true);
+  const autoPulseRef = useRef(true);
+  const pulseIntervalRef = useRef(4);
 
   // State
   const [timeScale, setTimeScale] = useState(1);
@@ -1817,6 +2005,11 @@ function LuminousFlow() {
   const [autoRotateSpeed, setAutoRotateSpeed] = useState(0.5);
   const [immersionMode, setImmersionMode] = useState(false);
   const [filmGrain, setFilmGrain] = useState(false);
+  
+  // Interactivity state
+  const [mouseFollow, setMouseFollow] = useState(true);
+  const [autoPulse, setAutoPulse] = useState(true);
+  const [pulseInterval, setPulseInterval] = useState(4);
 
   const [emitters, setEmitters] = useState([]);
   const [structures, setStructures] = useState([]);
@@ -1916,9 +2109,63 @@ function LuminousFlow() {
     // Initialize GPU Particle System
     const gpuParticles = new GPUParticleSystem(renderer, scene, 256); // 256² = 65,536 particles
     gpuParticlesRef.current = gpuParticles;
+    
+    // Initialize Shockwave Manager
+    const shockwaveManager = new ShockwaveManager(5);
+    shockwaveManagerRef.current = shockwaveManager;
+    
+    // Initialize Mouse Attractor
+    const mouseAttractor = new Attractor(new THREE.Vector3(0, 0, 0), 8.0, 'point');
+    mouseAttractorRef.current = mouseAttractor;
 
     // Create default scene
     createDefaultScene();
+    
+    // Event handlers for interactivity
+    const handleMouseMove = (event) => {
+      // Calculate normalized mouse coordinates
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      
+      // Raycast to find 3D position
+      raycasterRef.current.setFromCamera(mouseRef.current, camera);
+      
+      // Create a plane at z=0 to intersect with
+      const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+      const intersectPoint = new THREE.Vector3();
+      raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+      
+      // Update mouse attractor position
+      if (mouseAttractorRef.current && intersectPoint) {
+        mouseAttractorRef.current.setPosition(intersectPoint);
+      }
+    };
+    
+    const handleClick = (event) => {
+      // Calculate click position in 3D space
+      const rect = renderer.domElement.getBoundingClientRect();
+      const clickMouse = new THREE.Vector2(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      
+      raycasterRef.current.setFromCamera(clickMouse, camera);
+      
+      // Find intersection with a plane at z=0
+      const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+      const intersectPoint = new THREE.Vector3();
+      raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+      
+      // Trigger shockwave at click position
+      if (shockwaveManagerRef.current && intersectPoint) {
+        shockwaveManagerRef.current.trigger(intersectPoint, 15.0, 2.5, 10.0);
+      }
+    };
+    
+    // Add event listeners
+    renderer.domElement.addEventListener('mousemove', handleMouseMove);
+    renderer.domElement.addEventListener('click', handleClick);
 
     // Handle resize
     const handleResize = () => {
@@ -1943,6 +2190,43 @@ function LuminousFlow() {
       // Update controls
       if (controlsRef.current) {
         controlsRef.current.update();
+      }
+      
+      // Update shockwave manager
+      if (shockwaveManagerRef.current) {
+        shockwaveManagerRef.current.update(deltaTime);
+        
+        // Pass shockwave data to GPU particles
+        if (gpuParticlesRef.current) {
+          const sw = shockwaveManagerRef.current.getActiveShockwave();
+          gpuParticlesRef.current.setShockwave(sw.origin, sw.radius, sw.strength, sw.thickness);
+        }
+      }
+      
+      // Update mouse attractor (if mouseFollow is enabled)
+      if (mouseAttractorRef.current && gpuParticlesRef.current) {
+        const attractor = mouseAttractorRef.current;
+        gpuParticlesRef.current.setMouseAttractor(
+          attractor.position,
+          attractor.strength,
+          mouseFollowRef.current // Use ref for current state value
+        );
+      }
+      
+      // Periodic pulse effect (auto-pulse)
+      if (shockwaveManagerRef.current && autoPulseRef.current) {
+        const timeSinceLastPulse = elapsedTime - lastPulseTimeRef.current;
+        // Auto-pulse at configured interval
+        if (timeSinceLastPulse >= pulseIntervalRef.current) {
+          // Trigger pulse at center with moderate strength
+          shockwaveManagerRef.current.trigger(
+            new THREE.Vector3(0, 0, 0),
+            8.0,  // strength
+            3.0,  // thickness
+            6.0   // expansion speed
+          );
+          lastPulseTimeRef.current = elapsedTime;
+        }
       }
 
       // Update GPU particles
@@ -1986,9 +2270,21 @@ function LuminousFlow() {
     // Cleanup
     return () => {
       window.removeEventListener('resize', handleResize);
+      renderer.domElement.removeEventListener('mousemove', handleMouseMove);
+      renderer.domElement.removeEventListener('click', handleClick);
+      
       if (animationIdRef.current) {
         cancelAnimationFrame(animationIdRef.current);
       }
+      
+      // Clear shockwave manager
+      if (shockwaveManagerRef.current) {
+        shockwaveManagerRef.current.clear();
+        shockwaveManagerRef.current = null;
+      }
+      
+      // Clear mouse attractor
+      mouseAttractorRef.current = null;
 
       // Dispose GPU particles
       if (gpuParticlesRef.current) {
@@ -2044,6 +2340,19 @@ function LuminousFlow() {
       filmGrainPassRef.current.enabled = filmGrain;
     }
   }, [filmGrain]);
+
+  // Sync interactivity state to refs for animation loop access
+  useEffect(() => {
+    mouseFollowRef.current = mouseFollow;
+  }, [mouseFollow]);
+  
+  useEffect(() => {
+    autoPulseRef.current = autoPulse;
+  }, [autoPulse]);
+  
+  useEffect(() => {
+    pulseIntervalRef.current = pulseInterval;
+  }, [pulseInterval]);
 
   // Apply color palette
   useEffect(() => {
@@ -2456,15 +2765,49 @@ function LuminousFlow() {
               Curl noise + central attractor
             </div>
           </div>
+          
+          {/* Interactivity Controls */}
           <div style={{
-            fontSize: '11px',
-            opacity: 0.6,
-            padding: '8px',
-            background: 'rgba(255, 255, 255, 0.05)',
+            marginTop: '12px',
+            padding: '12px',
+            background: 'rgba(255, 170, 0, 0.1)',
             borderRadius: '4px',
-            lineHeight: '1.5'
+            border: '1px solid rgba(255, 170, 0, 0.3)'
           }}>
-            <strong>Note:</strong> The old CPU-based emitter system has been replaced with a high-performance GPGPU particle system. All particles are now computed on the GPU for smooth 60fps performance.
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#ffaa00'
+            }}>
+              Interactivity
+            </div>
+            <Checkbox
+              label="Mouse Follow (particles follow cursor)"
+              checked={mouseFollow}
+              onChange={setMouseFollow}
+            />
+            <Checkbox
+              label="Auto Pulse (periodic shockwaves)"
+              checked={autoPulse}
+              onChange={setAutoPulse}
+            />
+            {autoPulse && (
+              <Slider
+                label="Pulse Interval (seconds)"
+                value={pulseInterval}
+                onChange={setPulseInterval}
+                min={1} max={10} step={0.5}
+              />
+            )}
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              Click anywhere to trigger a shockwave!
+            </div>
           </div>
         </Section>
 

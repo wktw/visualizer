@@ -697,21 +697,31 @@ class GPUParticleSystem {
     this.positionUniforms.uDelta = { value: 0.0 };
     this.velocityUniforms.uTime = { value: 0.0 };
     this.velocityUniforms.uDelta = { value: 0.0 };
-    this.velocityUniforms.uAttractorPos = { value: new THREE.Vector3(0, 0, 0) };
-    this.velocityUniforms.uAttractorStrength = { value: 3.0 };
     this.velocityUniforms.uNoiseScale = { value: 0.5 };
     this.velocityUniforms.uNoiseSpeed = { value: 0.2 };
-    
-    // Mouse attractor uniforms
-    this.velocityUniforms.uMouseAttractorPos = { value: new THREE.Vector3(0, 0, 0) };
-    this.velocityUniforms.uMouseAttractorStrength = { value: 0.0 };
-    this.velocityUniforms.uMouseAttractorActive = { value: 0.0 };
-    
-    // Shockwave uniforms
-    this.velocityUniforms.uShockwaveOrigin = { value: new THREE.Vector3(0, 0, 0) };
-    this.velocityUniforms.uShockwaveRadius = { value: 0.0 };
-    this.velocityUniforms.uShockwaveStrength = { value: 0.0 };
-    this.velocityUniforms.uShockwaveThickness = { value: 2.0 };
+
+    // Multi-attractor uniforms (up to 16)
+    this.velocityUniforms.uAttractorPositions = { value: Array.from({ length: 16 }, () => new THREE.Vector3(0, 0, 0)) };
+    this.velocityUniforms.uAttractorStrengths = { value: new Array(16).fill(0.0) };
+    this.velocityUniforms.uAttractorTypes = { value: new Array(16).fill(0) };
+    this.velocityUniforms.uAttractorRadii = { value: new Array(16).fill(3.0) };
+    this.velocityUniforms.uAttractorCount = { value: 0 };
+
+    // Gravity uniforms
+    this.velocityUniforms.uGravityDir = { value: new THREE.Vector3(0, -1, 0) };
+    this.velocityUniforms.uGravityStrength = { value: 0.0 };
+
+    // Multi-shockwave uniforms (up to 5)
+    this.velocityUniforms.uShockwaveOrigins = { value: Array.from({ length: 5 }, () => new THREE.Vector3(0, 0, 0)) };
+    this.velocityUniforms.uShockwaveRadii = { value: new Array(5).fill(0.0) };
+    this.velocityUniforms.uShockwaveStrengths = { value: new Array(5).fill(0.0) };
+    this.velocityUniforms.uShockwaveThicknesses = { value: new Array(5).fill(2.0) };
+    this.velocityUniforms.uShockwaveCount = { value: 0 };
+
+    // Structure force field uniforms (up to 8)
+    this.velocityUniforms.uStructurePositions = { value: Array.from({ length: 8 }, () => new THREE.Vector3(0, 0, 0)) };
+    this.velocityUniforms.uStructureRadii = { value: new Array(8).fill(0.0) };
+    this.velocityUniforms.uStructureCount = { value: 0 };
 
     // Initialize
     const error = this.gpuCompute.init();
@@ -786,21 +796,31 @@ class GPUParticleSystem {
     return `
       uniform float uTime;
       uniform float uDelta;
-      uniform vec3 uAttractorPos;
-      uniform float uAttractorStrength;
       uniform float uNoiseScale;
       uniform float uNoiseSpeed;
-      
-      // Mouse attractor uniforms
-      uniform vec3 uMouseAttractorPos;
-      uniform float uMouseAttractorStrength;
-      uniform float uMouseAttractorActive;
-      
-      // Shockwave uniforms
-      uniform vec3 uShockwaveOrigin;
-      uniform float uShockwaveRadius;
-      uniform float uShockwaveStrength;
-      uniform float uShockwaveThickness;
+
+      // Multi-attractor system (up to 16 attractors)
+      uniform vec3 uAttractorPositions[16];
+      uniform float uAttractorStrengths[16];
+      uniform int uAttractorTypes[16]; // 0=point, 1=vortex, 2=orbit, 3=repulsor
+      uniform float uAttractorRadii[16];
+      uniform int uAttractorCount;
+
+      // Gravity uniforms
+      uniform vec3 uGravityDir;
+      uniform float uGravityStrength;
+
+      // Multi-shockwave uniforms (up to 5 shockwaves)
+      uniform vec3 uShockwaveOrigins[5];
+      uniform float uShockwaveRadii[5];
+      uniform float uShockwaveStrengths[5];
+      uniform float uShockwaveThicknesses[5];
+      uniform int uShockwaveCount;
+
+      // Structure force fields (up to 8 structures)
+      uniform vec3 uStructurePositions[8];
+      uniform float uStructureRadii[8];
+      uniform int uStructureCount;
 
       // Simplex noise functions
       vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
@@ -891,52 +911,94 @@ class GPUParticleSystem {
 
         vec3 acceleration = vec3(0.0);
 
-        // Central attractor force
-        vec3 toAttractor = uAttractorPos - pos.xyz;
-        float dist = length(toAttractor);
-        if (dist > 0.1) {
-          acceleration += normalize(toAttractor) * uAttractorStrength / (dist * dist + 1.0);
-        }
-        
-        // Mouse attractor force (when active)
-        if (uMouseAttractorActive > 0.5) {
-          vec3 toMouse = uMouseAttractorPos - pos.xyz;
-          float mouseDist = length(toMouse);
-          if (mouseDist > 0.1) {
-            // Smooth falloff for mouse attractor
-            float falloff = 1.0 / (mouseDist * mouseDist * 0.5 + 1.0);
-            acceleration += normalize(toMouse) * uMouseAttractorStrength * falloff;
+        // Multi-attractor forces
+        for (int i = 0; i < 16; i++) {
+          if (i >= uAttractorCount) break;
+
+          vec3 toAttractor = uAttractorPositions[i] - pos.xyz;
+          float dist = length(toAttractor);
+
+          if (dist > 0.1) {
+            vec3 dir = normalize(toAttractor);
+            float strength = uAttractorStrengths[i];
+            float radius = uAttractorRadii[i];
+
+            if (uAttractorTypes[i] == 0) {
+              // Point attractor - standard inverse square falloff
+              acceleration += dir * strength / (dist * dist + 0.5);
+            } else if (uAttractorTypes[i] == 1) {
+              // Vortex - tangential force with weak radial pull
+              vec3 tangent = normalize(cross(dir, vec3(0.0, 1.0, 0.0)));
+              if (length(tangent) < 0.1) {
+                tangent = normalize(cross(dir, vec3(1.0, 0.0, 0.0)));
+              }
+              acceleration += tangent * strength / (dist + 0.5);
+              acceleration += dir * strength * 0.2 / (dist * dist + 0.5); // weak pull
+            } else if (uAttractorTypes[i] == 2) {
+              // Orbit - force toward attractor that weakens inside radius (stable orbit)
+              float radiusFactor = smoothstep(0.0, radius, dist);
+              acceleration += dir * strength * radiusFactor / (dist * dist + 0.5);
+            } else if (uAttractorTypes[i] == 3) {
+              // Repulsor - push away from attractor
+              acceleration -= dir * strength / (dist * dist + 0.5);
+            }
           }
         }
-        
-        // Shockwave force - spherical expanding wave
-        if (uShockwaveStrength > 0.01) {
-          vec3 toParticle = pos.xyz - uShockwaveOrigin;
-          float particleDist = length(toParticle);
-          
-          // Calculate distance from shockwave shell
-          float shellDist = abs(particleDist - uShockwaveRadius);
-          
-          // Particles within the shockwave thickness are affected
-          if (shellDist < uShockwaveThickness) {
-            // Falloff based on distance from shell center
-            float shellFalloff = 1.0 - (shellDist / uShockwaveThickness);
-            shellFalloff = shellFalloff * shellFalloff; // Quadratic falloff
-            
-            // Push particles outward from shockwave origin
-            vec3 pushDir = normalize(toParticle);
-            
-            // Add tangential swirl for more interesting motion
-            vec3 tangent = normalize(cross(pushDir, vec3(0.0, 1.0, 0.0)));
-            if (length(tangent) < 0.1) {
-              tangent = normalize(cross(pushDir, vec3(1.0, 0.0, 0.0)));
+
+        // Gravity force
+        if (uGravityStrength > 0.001) {
+          acceleration += uGravityDir * uGravityStrength;
+        }
+
+        // Multi-shockwave forces
+        for (int i = 0; i < 5; i++) {
+          if (i >= uShockwaveCount) break;
+
+          if (uShockwaveStrengths[i] > 0.01) {
+            vec3 toParticle = pos.xyz - uShockwaveOrigins[i];
+            float particleDist = length(toParticle);
+
+            // Calculate distance from shockwave shell
+            float shellDist = abs(particleDist - uShockwaveRadii[i]);
+
+            // Particles within the shockwave thickness are affected
+            if (shellDist < uShockwaveThicknesses[i]) {
+              // Falloff based on distance from shell center
+              float shellFalloff = 1.0 - (shellDist / uShockwaveThicknesses[i]);
+              shellFalloff = shellFalloff * shellFalloff; // Quadratic falloff
+
+              // Push particles outward from shockwave origin
+              vec3 pushDir = normalize(toParticle);
+
+              // Add tangential swirl for more interesting motion
+              vec3 tangent = normalize(cross(pushDir, vec3(0.0, 1.0, 0.0)));
+              if (length(tangent) < 0.1) {
+                tangent = normalize(cross(pushDir, vec3(1.0, 0.0, 0.0)));
+              }
+
+              // Combine radial push with slight swirl
+              vec3 shockForce = pushDir * uShockwaveStrengths[i] * shellFalloff;
+              shockForce += tangent * uShockwaveStrengths[i] * shellFalloff * 0.3;
+
+              acceleration += shockForce;
             }
-            
-            // Combine radial push with slight swirl
-            vec3 shockForce = pushDir * uShockwaveStrength * shellFalloff;
-            shockForce += tangent * uShockwaveStrength * shellFalloff * 0.3;
-            
-            acceleration += shockForce;
+          }
+        }
+
+        // Structure force fields - deflection/repulsion
+        for (int i = 0; i < 8; i++) {
+          if (i >= uStructureCount) break;
+
+          vec3 toParticle = pos.xyz - uStructurePositions[i];
+          float dist = length(toParticle);
+          float radius = uStructureRadii[i];
+
+          // If particle is within 1.3x structure radius, push it away
+          if (dist < radius * 1.3) {
+            vec3 pushDir = normalize(toParticle);
+            float penetration = radius * 1.3 - dist;
+            float repulsionStrength = 5.0; // Tune this for desired effect
+            acceleration += pushDir * repulsionStrength * penetration / max(dist - radius, 0.1);
           }
         }
 
@@ -1125,22 +1187,66 @@ class GPUParticleSystem {
     this.particles.material.uniforms.uTime.value = elapsedTime;
   }
 
-  setAttractor(position, strength) {
-    this.velocityUniforms.uAttractorPos.value.copy(position);
-    this.velocityUniforms.uAttractorStrength.value = strength;
+  setAttractors(attractors) {
+    // attractors is an array of attractor objects with {position, strength, type, radius}
+    const count = Math.min(attractors.length, 16);
+    this.velocityUniforms.uAttractorCount.value = count;
+
+    for (let i = 0; i < count; i++) {
+      const attr = attractors[i];
+      this.velocityUniforms.uAttractorPositions.value[i].copy(attr.position);
+      this.velocityUniforms.uAttractorStrengths.value[i] = attr.strength;
+      // type mapping: 'point'=0, 'vortex'=1, 'orbit'=2, 'repulsor'=3
+      const typeMap = { 'point': 0, 'vortex': 1, 'orbit': 2, 'repulsor': 3 };
+      this.velocityUniforms.uAttractorTypes.value[i] = typeMap[attr.type] || 0;
+      this.velocityUniforms.uAttractorRadii.value[i] = attr.radius || 3.0;
+    }
+
+    // Clear remaining slots
+    for (let i = count; i < 16; i++) {
+      this.velocityUniforms.uAttractorStrengths.value[i] = 0.0;
+    }
   }
 
-  setMouseAttractor(position, strength, active) {
-    this.velocityUniforms.uMouseAttractorPos.value.copy(position);
-    this.velocityUniforms.uMouseAttractorStrength.value = strength;
-    this.velocityUniforms.uMouseAttractorActive.value = active ? 1.0 : 0.0;
+  setGravity(direction, strength) {
+    this.velocityUniforms.uGravityDir.value.copy(direction);
+    this.velocityUniforms.uGravityStrength.value = strength;
   }
 
-  setShockwave(origin, radius, strength, thickness) {
-    this.velocityUniforms.uShockwaveOrigin.value.copy(origin);
-    this.velocityUniforms.uShockwaveRadius.value = radius;
-    this.velocityUniforms.uShockwaveStrength.value = strength;
-    this.velocityUniforms.uShockwaveThickness.value = thickness;
+  setShockwaves(shockwaves) {
+    // shockwaves is an array of shockwave objects with {origin, radius, strength, thickness}
+    const count = Math.min(shockwaves.length, 5);
+    this.velocityUniforms.uShockwaveCount.value = count;
+
+    for (let i = 0; i < count; i++) {
+      const sw = shockwaves[i];
+      this.velocityUniforms.uShockwaveOrigins.value[i].copy(sw.origin);
+      this.velocityUniforms.uShockwaveRadii.value[i] = sw.radius;
+      this.velocityUniforms.uShockwaveStrengths.value[i] = sw.strength;
+      this.velocityUniforms.uShockwaveThicknesses.value[i] = sw.thickness;
+    }
+
+    // Clear remaining slots
+    for (let i = count; i < 5; i++) {
+      this.velocityUniforms.uShockwaveStrengths.value[i] = 0.0;
+    }
+  }
+
+  setStructures(structures) {
+    // structures is an array of structure objects with {position, radius}
+    const count = Math.min(structures.length, 8);
+    this.velocityUniforms.uStructureCount.value = count;
+
+    for (let i = 0; i < count; i++) {
+      const struct = structures[i];
+      this.velocityUniforms.uStructurePositions.value[i].copy(struct.position);
+      this.velocityUniforms.uStructureRadii.value[i] = struct.radius;
+    }
+
+    // Clear remaining slots
+    for (let i = count; i < 8; i++) {
+      this.velocityUniforms.uStructureRadii.value[i] = 0.0;
+    }
   }
 
   setColors(color1, color2, color3) {
@@ -1163,8 +1269,8 @@ class GPUParticleSystem {
 class Attractor {
   constructor(position, strength, type = 'point') {
     this.position = position.clone();
-    this.strength = strength; // positive = attract, negative = repel
-    this.type = type; // 'point', 'vortex', 'orbit'
+    this.strength = strength;
+    this.type = type; // 'point', 'vortex', 'orbit', 'repulsor'
     this.active = true;
     this.radius = 3.0; // for orbit type
     this.vortexAxis = new THREE.Vector3(0, 1, 0); // for vortex type
@@ -1175,10 +1281,11 @@ class Attractor {
   }
 
   toUniformData() {
+    const typeMap = { 'point': 0, 'vortex': 1, 'orbit': 2, 'repulsor': 3 };
     return {
       position: this.position,
       strength: this.active ? this.strength : 0,
-      type: this.type === 'point' ? 0 : (this.type === 'vortex' ? 1 : 2),
+      type: typeMap[this.type] || 0,
       radius: this.radius
     };
   }
@@ -1244,6 +1351,11 @@ class ShockwaveManager {
     }
 
     return strongest;
+  }
+
+  getAllShockwaves() {
+    // Return all active shockwaves for multi-shockwave support
+    return this.shockwaves;
   }
 
   hasActive() {
@@ -2057,6 +2169,25 @@ class GeometricStructure {
           opacity: 0.5
         });
     }
+  }
+
+  getBoundingRadius() {
+    // Return approximate bounding radius based on structure type and scale
+    const baseScale = this.config.scale || 1;
+    const pulse = 1 + (this.config.pulseIntensity || 0.1);
+    const typeMultipliers = {
+      'icosahedron': 1.5,
+      'torus': 1.3,
+      'rings': 2.2,
+      'helix': 2.5,
+      'mobius': 1.2
+    };
+    const multiplier = typeMultipliers[this.config.type] || 1.5;
+    return baseScale * multiplier * pulse;
+  }
+
+  getPosition() {
+    return this.group.position;
   }
 
   update(deltaTime, timeScale) {
@@ -3342,22 +3473,61 @@ function LuminousFlow() {
       // Update shockwave manager
       if (shockwaveManagerRef.current) {
         shockwaveManagerRef.current.update(deltaTime);
-        
-        // Pass shockwave data to GPU particles
+
+        // Pass all shockwaves to GPU particles (multi-shockwave support)
         if (gpuParticlesRef.current) {
-          const sw = shockwaveManagerRef.current.getActiveShockwave();
-          gpuParticlesRef.current.setShockwave(sw.origin, sw.radius, sw.strength, sw.thickness);
+          const shockwaves = shockwaveManagerRef.current.getAllShockwaves();
+          gpuParticlesRef.current.setShockwaves(shockwaves);
         }
       }
-      
-      // Update mouse attractor (if mouseFollow is enabled)
-      if (mouseAttractorRef.current && gpuParticlesRef.current) {
-        const attractor = mouseAttractorRef.current;
-        gpuParticlesRef.current.setMouseAttractor(
-          attractor.position,
-          attractor.strength,
-          mouseFollowRef.current // Use ref for current state value
-        );
+
+      // Update attractors and pass to GPU particles
+      if (gpuParticlesRef.current) {
+        // Build attractor list (include mouse attractor if active)
+        const attractorList = [];
+
+        // Add mouse attractor as first attractor if active
+        if (mouseFollowRef.current && mouseAttractorRef.current) {
+          attractorList.push({
+            position: mouseAttractorRef.current.position,
+            strength: mouseAttractorRef.current.strength,
+            type: 'point',
+            radius: 3.0
+          });
+        }
+
+        // Add user-defined attractors from state
+        attractors.forEach(attr => {
+          if (attr.active !== false) {
+            attractorList.push({
+              position: attr.position,
+              strength: attr.strength,
+              type: attr.type,
+              radius: attr.radius || 3.0
+            });
+          }
+        });
+
+        gpuParticlesRef.current.setAttractors(attractorList);
+
+        // Update gravity based on gravityDirection state
+        const gravityVectors = {
+          'down': new THREE.Vector3(0, -1, 0),
+          'up': new THREE.Vector3(0, 1, 0),
+          'left': new THREE.Vector3(-1, 0, 0),
+          'right': new THREE.Vector3(1, 0, 0),
+          'forward': new THREE.Vector3(0, 0, -1),
+          'backward': new THREE.Vector3(0, 0, 1)
+        };
+        const gravityDir = gravityVectors[gravityDirection] || new THREE.Vector3(0, -1, 0);
+        gpuParticlesRef.current.setGravity(gravityDir, gravity * 0.5);
+
+        // Pass structure data for force fields
+        const structureData = structuresRef.current.map(structure => ({
+          position: structure.getPosition(),
+          radius: structure.getBoundingRadius()
+        }));
+        gpuParticlesRef.current.setStructures(structureData);
       }
       
       // Periodic pulse effect (auto-pulse)
@@ -4943,6 +5113,32 @@ function LuminousFlow() {
                   onChange={(v) => updateAttractor(index, 'strength', v)}
                   min={-10} max={10} step={0.5}
                 />
+                <Slider
+                  label="Position X"
+                  value={attractor.position.x}
+                  onChange={(v) => updateAttractor(index, 'position', new THREE.Vector3(v, attractor.position.y, attractor.position.z))}
+                  min={-10} max={10} step={0.5}
+                />
+                <Slider
+                  label="Position Y"
+                  value={attractor.position.y}
+                  onChange={(v) => updateAttractor(index, 'position', new THREE.Vector3(attractor.position.x, v, attractor.position.z))}
+                  min={-10} max={10} step={0.5}
+                />
+                <Slider
+                  label="Position Z"
+                  value={attractor.position.z}
+                  onChange={(v) => updateAttractor(index, 'position', new THREE.Vector3(attractor.position.x, attractor.position.y, v))}
+                  min={-10} max={10} step={0.5}
+                />
+                {attractor.type === 'orbit' && (
+                  <Slider
+                    label="Orbit Radius"
+                    value={attractor.radius}
+                    onChange={(v) => updateAttractor(index, 'radius', v)}
+                    min={0.5} max={10} step={0.5}
+                  />
+                )}
               </div>
             ))}
             

@@ -153,6 +153,84 @@ const SCENE_PRESETS = {
     ],
     waveGrid: false,
     waveAmplitude: 1.0
+  },
+  'Murmuration': {
+    description: 'Flocking behavior - birds in synchronized flight',
+    palette: 'Northern Lights',
+    background: 'gradient',
+    timeScale: 1.0,
+    bloom: 1.4,
+    simulationMode: 'boids',
+    boids: {
+      separation: 2.0,
+      alignment: 1.5,
+      cohesion: 1.2,
+      neighborRadius: 2.5,
+      maxSpeed: 5.0
+    },
+    structures: [],
+    ribbons: [],
+    waveGrid: false,
+    waveAmplitude: 1.0
+  },
+  'Swarm': {
+    description: 'Dense flocking with high cohesion',
+    palette: 'Synthwave',
+    background: 'nebula',
+    timeScale: 0.8,
+    bloom: 2.0,
+    simulationMode: 'boids',
+    boids: {
+      separation: 0.8,
+      alignment: 0.8,
+      cohesion: 3.0,
+      neighborRadius: 3.0,
+      maxSpeed: 4.0
+    },
+    structures: [],
+    ribbons: [],
+    waveGrid: false,
+    waveAmplitude: 0.5
+  },
+  'Solar System': {
+    description: 'Gravitational n-body simulation',
+    palette: 'Solar Corona',
+    background: 'gradient',
+    timeScale: 0.6,
+    bloom: 2.2,
+    simulationMode: 'nbody',
+    nbody: {
+      gravConstant: 0.8,
+      softening: 0.5,
+      damping: 0.998
+    },
+    structures: [
+      { type: 'icosahedron', scale: 1.5, position: [0, 0, 0], rotationSpeed: 0.1, mass: 5.0 },
+      { type: 'torus', scale: 0.8, position: [4, 0, 0], rotationSpeed: 0.3, mass: 2.0 },
+      { type: 'rings', scale: 0.6, position: [-3, 2, 0], rotationSpeed: 0.2, mass: 1.5 }
+    ],
+    ribbons: [],
+    waveGrid: false,
+    waveAmplitude: 0.8
+  },
+  'Galaxy': {
+    description: 'Massive central body with orbiting particles',
+    palette: 'Deep Ocean',
+    background: 'nebula',
+    timeScale: 0.5,
+    bloom: 1.8,
+    simulationMode: 'nbody',
+    nbody: {
+      gravConstant: 1.2,
+      softening: 0.8,
+      damping: 0.999
+    },
+    structures: [
+      { type: 'icosahedron', scale: 2.0, position: [0, 0, 0], rotationSpeed: 0.05, mass: 10.0 }
+    ],
+    ribbons: [],
+    waveGrid: false,
+    waveAmplitude: 1.0
   }
 };
 
@@ -700,6 +778,22 @@ class GPUParticleSystem {
     this.velocityUniforms.uNoiseScale = { value: 0.5 };
     this.velocityUniforms.uNoiseSpeed = { value: 0.2 };
 
+    // Simulation mode uniforms
+    this.velocityUniforms.uSimulationMode = { value: 0 }; // 0=flow, 1=boids, 2=nbody
+
+    // Boids parameters
+    this.velocityUniforms.uBoidsSeparation = { value: 1.5 };
+    this.velocityUniforms.uBoidsAlignment = { value: 1.0 };
+    this.velocityUniforms.uBoidsCohesion = { value: 1.0 };
+    this.velocityUniforms.uBoidsNeighborRadius = { value: 2.0 };
+    this.velocityUniforms.uBoidsMaxSpeed = { value: 4.0 };
+
+    // N-Body parameters
+    this.velocityUniforms.uNbodyGravConstant = { value: 0.5 };
+    this.velocityUniforms.uNbodySoftening = { value: 0.5 };
+    this.velocityUniforms.uNbodyDamping = { value: 0.999 };
+    this.velocityUniforms.uStructureMasses = { value: new Array(8).fill(1.0) };
+
     // Multi-attractor uniforms (up to 16)
     this.velocityUniforms.uAttractorPositions = { value: Array.from({ length: 16 }, () => new THREE.Vector3(0, 0, 0)) };
     this.velocityUniforms.uAttractorStrengths = { value: new Array(16).fill(0.0) };
@@ -798,6 +892,22 @@ class GPUParticleSystem {
       uniform float uDelta;
       uniform float uNoiseScale;
       uniform float uNoiseSpeed;
+
+      // Simulation mode: 0=flow, 1=boids, 2=nbody
+      uniform int uSimulationMode;
+
+      // Boids parameters
+      uniform float uBoidsSeparation;
+      uniform float uBoidsAlignment;
+      uniform float uBoidsCohesion;
+      uniform float uBoidsNeighborRadius;
+      uniform float uBoidsMaxSpeed;
+
+      // N-Body parameters
+      uniform float uNbodyGravConstant;
+      uniform float uNbodySoftening;
+      uniform float uNbodyDamping;
+      uniform float uStructureMasses[8];
 
       // Multi-attractor system (up to 16 attractors)
       uniform vec3 uAttractorPositions[16];
@@ -910,47 +1020,168 @@ class GPUParticleSystem {
         vec4 vel = texture2D(textureVelocity, uv);
 
         vec3 acceleration = vec3(0.0);
+        float damping = 0.98;
+        float maxSpeed = 8.0;
 
-        // Multi-attractor forces
-        for (int i = 0; i < 16; i++) {
-          if (i >= uAttractorCount) break;
+        // BOIDS MODE (Flocking simulation)
+        if (uSimulationMode == 1) {
+          vec3 separation = vec3(0.0);
+          vec3 alignment = vec3(0.0);
+          vec3 cohesion = vec3(0.0);
+          int neighborCount = 0;
 
-          vec3 toAttractor = uAttractorPositions[i] - pos.xyz;
-          float dist = length(toAttractor);
+          // Sample 16 neighbors using pseudo-random offsets
+          for (int i = 0; i < 16; i++) {
+            float fi = float(i);
+            vec2 neighborUV = fract(uv + vec2(fi * 0.618033, fi * 0.381966));
+            vec4 neighborPos = texture2D(texturePosition, neighborUV);
+            vec4 neighborVel = texture2D(textureVelocity, neighborUV);
 
-          if (dist > 0.1) {
-            vec3 dir = normalize(toAttractor);
-            float strength = uAttractorStrengths[i];
-            float radius = uAttractorRadii[i];
+            vec3 toNeighbor = neighborPos.xyz - pos.xyz;
+            float dist = length(toNeighbor);
 
-            if (uAttractorTypes[i] == 0) {
-              // Point attractor - standard inverse square falloff
-              acceleration += dir * strength / (dist * dist + 0.5);
-            } else if (uAttractorTypes[i] == 1) {
-              // Vortex - tangential force with weak radial pull
-              vec3 tangent = normalize(cross(dir, vec3(0.0, 1.0, 0.0)));
-              if (length(tangent) < 0.1) {
-                tangent = normalize(cross(dir, vec3(1.0, 0.0, 0.0)));
+            if (dist < uBoidsNeighborRadius && dist > 0.01) {
+              // Separation: avoid crowding neighbors
+              if (dist < uBoidsNeighborRadius * 0.5) {
+                separation -= normalize(toNeighbor) / max(dist, 0.01);
               }
-              acceleration += tangent * strength / (dist + 0.5);
-              acceleration += dir * strength * 0.2 / (dist * dist + 0.5); // weak pull
-            } else if (uAttractorTypes[i] == 2) {
-              // Orbit - force toward attractor that weakens inside radius (stable orbit)
-              float radiusFactor = smoothstep(0.0, radius, dist);
-              acceleration += dir * strength * radiusFactor / (dist * dist + 0.5);
-            } else if (uAttractorTypes[i] == 3) {
-              // Repulsor - push away from attractor
-              acceleration -= dir * strength / (dist * dist + 0.5);
+
+              // Alignment: steer toward average heading
+              alignment += neighborVel.xyz;
+
+              // Cohesion: steer toward center of mass
+              cohesion += neighborPos.xyz;
+
+              neighborCount++;
             }
           }
+
+          if (neighborCount > 0) {
+            alignment /= float(neighborCount);
+            cohesion = cohesion / float(neighborCount) - pos.xyz;
+          }
+
+          // Apply weighted forces
+          acceleration += separation * uBoidsSeparation;
+          acceleration += alignment * uBoidsAlignment * 0.1;
+          acceleration += cohesion * uBoidsCohesion * 0.1;
+
+          // Light curl noise for organic feel (20% strength)
+          vec3 noisePos = pos.xyz * uNoiseScale + uTime * uNoiseSpeed;
+          vec3 curl = curlNoise(noisePos);
+          acceleration += curl * 0.4;
+
+          // Containment force - push back toward origin when far
+          float distFromOrigin = length(pos.xyz);
+          if (distFromOrigin > 8.0) {
+            acceleration -= normalize(pos.xyz) * (distFromOrigin - 8.0) * 0.5;
+          }
+
+          maxSpeed = uBoidsMaxSpeed;
+        }
+        // N-BODY MODE (Gravitational simulation)
+        else if (uSimulationMode == 2) {
+          // Structures act as massive bodies
+          for (int i = 0; i < 8; i++) {
+            if (i >= uStructureCount) break;
+
+            vec3 toStructure = uStructurePositions[i] - pos.xyz;
+            float dist = length(toStructure);
+
+            if (dist > 0.1) {
+              vec3 dir = normalize(toStructure);
+              float mass = uStructureMasses[i];
+              // F = G * M / (r^2 + softening)
+              float force = uNbodyGravConstant * mass / (dist * dist + uNbodySoftening);
+              acceleration += dir * force;
+            }
+          }
+
+          // Weak inter-particle gravity (sample 8 nearby particles)
+          for (int i = 0; i < 8; i++) {
+            float fi = float(i);
+            vec2 neighborUV = fract(uv + vec2(fi * 0.707107, fi * 0.292893));
+            vec4 neighborPos = texture2D(texturePosition, neighborUV);
+
+            vec3 toNeighbor = neighborPos.xyz - pos.xyz;
+            float dist = length(toNeighbor);
+
+            if (dist > 0.1 && dist < 3.0) {
+              vec3 dir = normalize(toNeighbor);
+              float force = 0.001 / (dist * dist + 0.1);
+              acceleration += dir * force;
+            }
+          }
+
+          // No curl noise in n-body mode
+          damping = uNbodyDamping; // Preserve orbital energy
+          maxSpeed = 20.0; // Higher speed limit for orbital motion
+        }
+        // FLOW MODE (Default - attractors + noise)
+        else {
+          // Multi-attractor forces
+          for (int i = 0; i < 16; i++) {
+            if (i >= uAttractorCount) break;
+
+            vec3 toAttractor = uAttractorPositions[i] - pos.xyz;
+            float dist = length(toAttractor);
+
+            if (dist > 0.1) {
+              vec3 dir = normalize(toAttractor);
+              float strength = uAttractorStrengths[i];
+              float radius = uAttractorRadii[i];
+
+              if (uAttractorTypes[i] == 0) {
+                // Point attractor - standard inverse square falloff
+                acceleration += dir * strength / (dist * dist + 0.5);
+              } else if (uAttractorTypes[i] == 1) {
+                // Vortex - tangential force with weak radial pull
+                vec3 tangent = normalize(cross(dir, vec3(0.0, 1.0, 0.0)));
+                if (length(tangent) < 0.1) {
+                  tangent = normalize(cross(dir, vec3(1.0, 0.0, 0.0)));
+                }
+                acceleration += tangent * strength / (dist + 0.5);
+                acceleration += dir * strength * 0.2 / (dist * dist + 0.5); // weak pull
+              } else if (uAttractorTypes[i] == 2) {
+                // Orbit - force toward attractor that weakens inside radius (stable orbit)
+                float radiusFactor = smoothstep(0.0, radius, dist);
+                acceleration += dir * strength * radiusFactor / (dist * dist + 0.5);
+              } else if (uAttractorTypes[i] == 3) {
+                // Repulsor - push away from attractor
+                acceleration -= dir * strength / (dist * dist + 0.5);
+              }
+            }
+          }
+
+          // Gravity force
+          if (uGravityStrength > 0.001) {
+            acceleration += uGravityDir * uGravityStrength;
+          }
+
+          // Structure force fields - deflection/repulsion
+          for (int i = 0; i < 8; i++) {
+            if (i >= uStructureCount) break;
+
+            vec3 toParticle = pos.xyz - uStructurePositions[i];
+            float dist = length(toParticle);
+            float radius = uStructureRadii[i];
+
+            // If particle is within 1.3x structure radius, push it away
+            if (dist < radius * 1.3) {
+              vec3 pushDir = normalize(toParticle);
+              float penetration = radius * 1.3 - dist;
+              float repulsionStrength = 5.0;
+              acceleration += pushDir * repulsionStrength * penetration / max(dist - radius, 0.1);
+            }
+          }
+
+          // Curl noise for organic movement
+          vec3 noisePos = pos.xyz * uNoiseScale + uTime * uNoiseSpeed;
+          vec3 curl = curlNoise(noisePos);
+          acceleration += curl * 2.0;
         }
 
-        // Gravity force
-        if (uGravityStrength > 0.001) {
-          acceleration += uGravityDir * uGravityStrength;
-        }
-
-        // Multi-shockwave forces
+        // Multi-shockwave forces (active in all modes)
         for (int i = 0; i < 5; i++) {
           if (i >= uShockwaveCount) break;
 
@@ -958,25 +1189,18 @@ class GPUParticleSystem {
             vec3 toParticle = pos.xyz - uShockwaveOrigins[i];
             float particleDist = length(toParticle);
 
-            // Calculate distance from shockwave shell
             float shellDist = abs(particleDist - uShockwaveRadii[i]);
 
-            // Particles within the shockwave thickness are affected
             if (shellDist < uShockwaveThicknesses[i]) {
-              // Falloff based on distance from shell center
               float shellFalloff = 1.0 - (shellDist / uShockwaveThicknesses[i]);
-              shellFalloff = shellFalloff * shellFalloff; // Quadratic falloff
+              shellFalloff = shellFalloff * shellFalloff;
 
-              // Push particles outward from shockwave origin
               vec3 pushDir = normalize(toParticle);
-
-              // Add tangential swirl for more interesting motion
               vec3 tangent = normalize(cross(pushDir, vec3(0.0, 1.0, 0.0)));
               if (length(tangent) < 0.1) {
                 tangent = normalize(cross(pushDir, vec3(1.0, 0.0, 0.0)));
               }
 
-              // Combine radial push with slight swirl
               vec3 shockForce = pushDir * uShockwaveStrengths[i] * shellFalloff;
               shockForce += tangent * uShockwaveStrengths[i] * shellFalloff * 0.3;
 
@@ -985,37 +1209,14 @@ class GPUParticleSystem {
           }
         }
 
-        // Structure force fields - deflection/repulsion
-        for (int i = 0; i < 8; i++) {
-          if (i >= uStructureCount) break;
-
-          vec3 toParticle = pos.xyz - uStructurePositions[i];
-          float dist = length(toParticle);
-          float radius = uStructureRadii[i];
-
-          // If particle is within 1.3x structure radius, push it away
-          if (dist < radius * 1.3) {
-            vec3 pushDir = normalize(toParticle);
-            float penetration = radius * 1.3 - dist;
-            float repulsionStrength = 5.0; // Tune this for desired effect
-            acceleration += pushDir * repulsionStrength * penetration / max(dist - radius, 0.1);
-          }
-        }
-
-        // Curl noise for organic movement
-        vec3 noisePos = pos.xyz * uNoiseScale + uTime * uNoiseSpeed;
-        vec3 curl = curlNoise(noisePos);
-        acceleration += curl * 2.0;
-
         // Apply acceleration
         vel.xyz += acceleration * uDelta;
 
         // Damping
-        vel.xyz *= 0.98;
+        vel.xyz *= damping;
 
-        // Speed limit (increased to allow shockwave bursts)
+        // Speed limit
         float speed = length(vel.xyz);
-        float maxSpeed = 8.0;
         if (speed > maxSpeed) {
           vel.xyz = normalize(vel.xyz) * maxSpeed;
         }
@@ -2990,6 +3191,21 @@ function LuminousFlow() {
   const [attractors, setAttractors] = useState([]);
   const [velocityColorMode, setVelocityColorMode] = useState('speed'); // 'speed', 'direction', 'acceleration'
 
+  // Simulation mode state
+  const [simulationMode, setSimulationMode] = useState('flow'); // 'flow', 'boids', 'nbody'
+
+  // Boids parameters
+  const [boidsSeparation, setBoidsSeparation] = useState(1.5);
+  const [boidsAlignment, setBoidsAlignment] = useState(1.0);
+  const [boidsCohesion, setBoidsCohesion] = useState(1.0);
+  const [boidsNeighborRadius, setBoidsNeighborRadius] = useState(2.0);
+  const [boidsMaxSpeed, setBoidsMaxSpeed] = useState(4.0);
+
+  // N-Body parameters
+  const [nbodyGravConstant, setNbodyGravConstant] = useState(0.5);
+  const [nbodySoftening, setNbodySoftening] = useState(0.5);
+  const [nbodyDamping, setNbodyDamping] = useState(0.999);
+
   const [expandedSections, setExpandedSections] = useState({
     global: true,
     emitters: true,
@@ -3483,6 +3699,29 @@ function LuminousFlow() {
 
       // Update attractors and pass to GPU particles
       if (gpuParticlesRef.current) {
+        // Update simulation mode
+        const modeMap = { 'flow': 0, 'boids': 1, 'nbody': 2 };
+        gpuParticlesRef.current.velocityUniforms.uSimulationMode.value = modeMap[simulationMode] || 0;
+
+        // Update boids parameters
+        gpuParticlesRef.current.velocityUniforms.uBoidsSeparation.value = boidsSeparation;
+        gpuParticlesRef.current.velocityUniforms.uBoidsAlignment.value = boidsAlignment;
+        gpuParticlesRef.current.velocityUniforms.uBoidsCohesion.value = boidsCohesion;
+        gpuParticlesRef.current.velocityUniforms.uBoidsNeighborRadius.value = boidsNeighborRadius;
+        gpuParticlesRef.current.velocityUniforms.uBoidsMaxSpeed.value = boidsMaxSpeed;
+
+        // Update n-body parameters
+        gpuParticlesRef.current.velocityUniforms.uNbodyGravConstant.value = nbodyGravConstant;
+        gpuParticlesRef.current.velocityUniforms.uNbodySoftening.value = nbodySoftening;
+        gpuParticlesRef.current.velocityUniforms.uNbodyDamping.value = nbodyDamping;
+
+        // Update structure masses
+        structures.forEach((structure, i) => {
+          if (i < 8) {
+            gpuParticlesRef.current.velocityUniforms.uStructureMasses.value[i] = structure.mass || 1.0;
+          }
+        });
+
         // Build attractor list (include mouse attractor if active)
         const attractorList = [];
 
@@ -4103,7 +4342,8 @@ function LuminousFlow() {
       pulseIntensity: 0.1,
       materialStyle: 'holographic',
       complexity: 1,
-      color: palette.primary
+      color: palette.primary,
+      mass: 1.0 // For N-Body simulation mode
     };
 
     const structure = new GeometricStructure(sceneRef.current, config);
@@ -4420,10 +4660,10 @@ function LuminousFlow() {
   const loadPreset = useCallback((presetName) => {
     const preset = SCENE_PRESETS[presetName];
     if (!preset) return;
-    
+
     // Clear current scene
     clearScene();
-    
+
     // Apply preset settings
     setColorPalette(preset.palette);
     setBackgroundStyle(preset.background);
@@ -4431,7 +4671,28 @@ function LuminousFlow() {
     setBloomIntensity(preset.bloom);
     setWaveGridEnabled(preset.waveGrid);
     setWaveAmplitude(preset.waveAmplitude);
-    
+
+    // Apply simulation mode settings
+    if (preset.simulationMode) {
+      setSimulationMode(preset.simulationMode);
+
+      if (preset.simulationMode === 'boids' && preset.boids) {
+        setBoidsSeparation(preset.boids.separation);
+        setBoidsAlignment(preset.boids.alignment);
+        setBoidsCohesion(preset.boids.cohesion);
+        setBoidsNeighborRadius(preset.boids.neighborRadius);
+        setBoidsMaxSpeed(preset.boids.maxSpeed);
+      }
+
+      if (preset.simulationMode === 'nbody' && preset.nbody) {
+        setNbodyGravConstant(preset.nbody.gravConstant);
+        setNbodySoftening(preset.nbody.softening);
+        setNbodyDamping(preset.nbody.damping);
+      }
+    } else {
+      setSimulationMode('flow'); // Default to flow mode
+    }
+
     // Add structures from preset
     preset.structures.forEach((structConfig, i) => {
       setTimeout(() => {
@@ -4447,9 +4708,10 @@ function LuminousFlow() {
           pulseIntensity: 0.1,
           materialStyle: 'holographic',
           complexity: 1,
-          color: COLOR_PALETTES[preset.palette].primary
+          color: COLOR_PALETTES[preset.palette].primary,
+          mass: structConfig.mass || 1.0
         };
-        
+
         const structure = new GeometricStructure(sceneRef.current, config);
         structuresRef.current.push(structure);
         setStructures(prev => [...prev, { id: Date.now() + i, ...config }]);
@@ -4894,7 +5156,113 @@ function LuminousFlow() {
               Curl noise + central attractor
             </div>
           </div>
-          
+
+          {/* Simulation Mode Controls */}
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            background: 'rgba(100, 200, 255, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(100, 200, 255, 0.3)'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#64c8ff'
+            }}>
+              Simulation Mode
+            </div>
+
+            <Select
+              label="Mode"
+              value={simulationMode}
+              onChange={setSimulationMode}
+              options={['flow', 'boids', 'nbody']}
+            />
+
+            {simulationMode === 'boids' && (
+              <div style={{
+                marginTop: '10px',
+                padding: '10px',
+                background: 'rgba(0, 0, 0, 0.3)',
+                borderRadius: '4px'
+              }}>
+                <div style={{ fontSize: '11px', fontWeight: '500', marginBottom: '6px' }}>Boids Parameters</div>
+                <Slider
+                  label="Separation"
+                  value={boidsSeparation}
+                  onChange={setBoidsSeparation}
+                  min={0} max={5} step={0.1}
+                />
+                <Slider
+                  label="Alignment"
+                  value={boidsAlignment}
+                  onChange={setBoidsAlignment}
+                  min={0} max={5} step={0.1}
+                />
+                <Slider
+                  label="Cohesion"
+                  value={boidsCohesion}
+                  onChange={setBoidsCohesion}
+                  min={0} max={5} step={0.1}
+                />
+                <Slider
+                  label="Neighbor Radius"
+                  value={boidsNeighborRadius}
+                  onChange={setBoidsNeighborRadius}
+                  min={0.5} max={5} step={0.1}
+                />
+                <Slider
+                  label="Max Speed"
+                  value={boidsMaxSpeed}
+                  onChange={setBoidsMaxSpeed}
+                  min={1} max={10} step={0.5}
+                />
+              </div>
+            )}
+
+            {simulationMode === 'nbody' && (
+              <div style={{
+                marginTop: '10px',
+                padding: '10px',
+                background: 'rgba(0, 0, 0, 0.3)',
+                borderRadius: '4px'
+              }}>
+                <div style={{ fontSize: '11px', fontWeight: '500', marginBottom: '6px' }}>N-Body Parameters</div>
+                <Slider
+                  label="Gravitational Constant"
+                  value={nbodyGravConstant}
+                  onChange={setNbodyGravConstant}
+                  min={0.01} max={2.0} step={0.01}
+                />
+                <Slider
+                  label="Softening"
+                  value={nbodySoftening}
+                  onChange={setNbodySoftening}
+                  min={0.1} max={2.0} step={0.1}
+                />
+                <Slider
+                  label="Damping"
+                  value={nbodyDamping}
+                  onChange={setNbodyDamping}
+                  min={0.99} max={1.0} step={0.001}
+                />
+              </div>
+            )}
+
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              {simulationMode === 'flow' && 'Default mode: curl noise + attractors + shockwaves'}
+              {simulationMode === 'boids' && 'Flocking behavior: particles avoid, align, and cohere'}
+              {simulationMode === 'nbody' && 'Gravitational simulation: structures as massive bodies'}
+            </div>
+          </div>
+
           {/* Interactivity Controls */}
           <div style={{
             marginTop: '12px',
@@ -5307,6 +5675,14 @@ function LuminousFlow() {
                 onChange={(v) => updateStructure(index, 'materialStyle', v)}
                 options={['glass', 'holographic', 'solid']}
               />
+              {simulationMode === 'nbody' && (
+                <Slider
+                  label="Mass (N-Body)"
+                  value={structure.mass || 1.0}
+                  onChange={(v) => updateStructure(index, 'mass', v)}
+                  min={0.1} max={10} step={0.1}
+                />
+              )}
             </ItemPanel>
           ))}
         </Section>

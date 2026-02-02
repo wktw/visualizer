@@ -801,6 +801,10 @@ class GPUParticleSystem {
     // Simulation mode uniforms
     this.velocityUniforms.uSimulationMode = { value: 0 }; // 0=flow, 1=boids, 2=nbody
 
+    // Flow mode parameters
+    this.velocityUniforms.uFlowDamping = { value: 0.98 };
+    this.velocityUniforms.uFlowMaxSpeed = { value: 8.0 };
+
     // Boids parameters
     this.velocityUniforms.uBoidsSeparation = { value: 1.5 };
     this.velocityUniforms.uBoidsAlignment = { value: 1.0 };
@@ -915,6 +919,10 @@ class GPUParticleSystem {
 
       // Simulation mode: 0=flow, 1=boids, 2=nbody
       uniform int uSimulationMode;
+
+      // Flow mode parameters
+      uniform float uFlowDamping;
+      uniform float uFlowMaxSpeed;
 
       // Boids parameters
       uniform float uBoidsSeparation;
@@ -1040,8 +1048,8 @@ class GPUParticleSystem {
         vec4 vel = texture2D(textureVelocity, uv);
 
         vec3 acceleration = vec3(0.0);
-        float damping = 0.98;
-        float maxSpeed = 8.0;
+        float damping = uFlowDamping;
+        float maxSpeed = uFlowMaxSpeed;
 
         // BOIDS MODE (Flocking simulation)
         if (uSimulationMode == 1) {
@@ -3108,6 +3116,7 @@ function LuminousFlow() {
   const backgroundRef = useRef(null);
   const filmGrainPassRef = useRef(null);
   const chromaticAberrationPassRef = useRef(null);
+  const vignettePassRef = useRef(null);
   const fxaaPassRef = useRef(null);
   const bloomPassRef = useRef(null);
   const bokehPassRef = useRef(null);
@@ -3217,6 +3226,26 @@ function LuminousFlow() {
 
   // Screenshot/recording state
   const [isRecording, setIsRecording] = useState(false);
+
+  // GPU Particle parameters (Phase 4)
+  const [particleSize, setParticleSize] = useState(2.0);
+  const [particleGlow, setParticleGlow] = useState(1.5);
+  const [particleSpeedLimit, setParticleSpeedLimit] = useState(8.0);
+  const [particleDamping, setParticleDamping] = useState(0.98);
+  const [curlNoiseScale, setCurlNoiseScale] = useState(0.5);
+  const [curlNoiseSpeed, setCurlNoiseSpeed] = useState(0.2);
+  const [spawnRadius, setSpawnRadius] = useState(8.0);
+
+  // Wave Grid parameters (Phase 4)
+  const [waveFrequency, setWaveFrequency] = useState(0.5);
+  const [waveOpacity, setWaveOpacity] = useState(0.5);
+  const [waveParticleSize, setWaveParticleSize] = useState(2.5);
+
+  // Post-processing parameters (Phase 4)
+  const [bloomRadius, setBloomRadius] = useState(0.8);
+  const [bloomThreshold, setBloomThreshold] = useState(0.0);
+  const [filmGrainIntensity, setFilmGrainIntensity] = useState(0.03);
+  const [vignetteIntensity, setVignetteIntensity] = useState(1.2);
 
   const [emitters, setEmitters] = useState([]);
   const [structures, setStructures] = useState([]);
@@ -3343,6 +3372,7 @@ function LuminousFlow() {
     vignettePass.uniforms.offset.value = 0.95;
     vignettePass.uniforms.darkness.value = 1.2;
     composer.addPass(vignettePass);
+    vignettePassRef.current = vignettePass;
 
     const filmGrainPass = new ShaderPass(FilmGrainShader);
     filmGrainPass.uniforms.intensity.value = 0.03;
@@ -3859,8 +3889,16 @@ function LuminousFlow() {
           radius: structure.getBoundingRadius()
         }));
         gpuParticlesRef.current.setStructures(structureData);
+
+        // Update particle parameters (Phase 4)
+        gpuParticlesRef.current.velocityUniforms.uNoiseScale.value = curlNoiseScale;
+        gpuParticlesRef.current.velocityUniforms.uNoiseSpeed.value = curlNoiseSpeed;
+        gpuParticlesRef.current.velocityUniforms.uFlowDamping.value = particleDamping;
+        gpuParticlesRef.current.velocityUniforms.uFlowMaxSpeed.value = particleSpeedLimit;
+        gpuParticlesRef.current.particles.material.uniforms.uSize.value = particleSize;
+        gpuParticlesRef.current.particles.material.uniforms.uGlowIntensity.value = particleGlow;
       }
-      
+
       // Periodic pulse effect (auto-pulse)
       if (shockwaveManagerRef.current && autoPulseRef.current) {
         const timeSinceLastPulse = elapsedTime - lastPulseTimeRef.current;
@@ -3919,6 +3957,22 @@ function LuminousFlow() {
           bokehPassRef.current.uniforms.focus.value = dofFocus;
           bokehPassRef.current.uniforms.aperture.value = dofAperture;
         }
+      }
+
+      // Update post-processing parameters (Phase 4)
+      if (bloomPassRef.current) {
+        bloomPassRef.current.strength = bloomIntensity;
+        bloomPassRef.current.radius = bloomRadius;
+        bloomPassRef.current.threshold = bloomThreshold;
+      }
+      if (filmGrainPassRef.current && filmGrainPassRef.current.enabled) {
+        filmGrainPassRef.current.uniforms.intensity.value = filmGrainIntensity;
+      }
+      if (chromaticAberrationPassRef.current) {
+        chromaticAberrationPassRef.current.uniforms.uIntensity.value = chromaticIntensity;
+      }
+      if (vignettePassRef.current) {
+        vignettePassRef.current.uniforms.darkness.value = vignetteIntensity;
       }
 
       // Audio reactivity system

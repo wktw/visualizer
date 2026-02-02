@@ -1,142 +1,322 @@
-# Luminous Flow — Post-Phase Analysis & Next Steps
+# Luminous Flow — Post-Phase Analysis (All 5 Phases Complete)
 
 ## Current State
 
-Phases 1–3 are implemented (multi-attractor physics, boids/n-body simulation modes, camera presets with fly-to/DoF/shake). Phases 4–5 (save/load, parameter exposure, particle trails, smooth transitions, onboarding, perf overlay) were **not implemented**. The codebase is 6,521 lines.
+All 5 phases implemented. Codebase is 7,618 lines. Build compiles successfully. Features present: multi-attractor physics pipeline, boids/n-body simulation modes, camera presets with fly-to/DoF/shake, AfterimagePass particle trails, smooth palette transitions, save/load system, collapsible UI sections with per-section reset, performance overlay, onboarding overlay, expanded parameter sliders.
 
 ---
 
-## BUGS
+## CRITICAL BUGS (Will Crash at Runtime)
 
-### Critical
+### Bug 1: Undefined state setters in `resetCameraControls` (line ~5148)
 
-1. **Vector3 allocation every frame in animation loop** (`LuminousFlow.jsx:3754`)
-   ```js
-   const targetVec = new THREE.Vector3().lerpVectors(anim.startTarget, anim.endTarget, eased);
-   ```
-   Allocates a new object 60 times/second during camera fly-to. Should use a pre-allocated vector on `cameraAnimRef`.
+```js
+const resetCameraControls = useCallback(() => {
+  setCameraDistance(15);        // ← DOES NOT EXIST
+  setCameraHeight(8);           // ← DOES NOT EXIST
+  setCameraAngle(0.8);          // ← DOES NOT EXIST
+  setCameraRotationSpeed(0.5);  // ← DOES NOT EXIST
+}, [showToast]);
+```
 
-2. **Gravity direction vectors allocated every frame** (`LuminousFlow.jsx:3845-3853`)
-   ```js
-   const gravityVectors = {
-     'down': new THREE.Vector3(0, -1, 0),
-     // ... 6 total
+**Impact:** Clicking the reset button on the Camera section will throw `ReferenceError`. None of these state variables are declared with `useState` anywhere in the file.
+
+**Fix:** Either declare these state variables with `useState`, or replace these calls with the existing camera reset logic — call `flyToPreset('default')` and reset `autoRotateSpeed` via its existing setter.
+
+### Bug 2: Undefined `setAudioSensitivity` in `resetAudioControls` (line ~5160)
+
+```js
+const resetAudioControls = useCallback(() => {
+  setAudioSensitivity(1.5);  // ← DOES NOT EXIST
+}, [showToast]);
+```
+
+**Impact:** Clicking the reset button on the Audio section throws `ReferenceError`.
+
+**Fix:** Either add `const [audioSensitivity, setAudioSensitivity] = useState(1.5);` or remove the line.
+
+### Bug 3: Undefined `uGlowIntensity` uniform access (line ~4034)
+
+```js
+gpuParticlesRef.current.particles.material.uniforms.uGlowIntensity.value = particleGlow;
+```
+
+**Impact:** `uGlowIntensity` is never declared in the particle material's uniforms object (lines 1298-1310). This throws `TypeError: Cannot set property 'value' of undefined` every frame when the animation loop runs.
+
+**Fix:** Add `uGlowIntensity: { value: 1.5 }` to the particle material uniforms in the GPUParticleSystem constructor. Also add the corresponding `uniform float uGlowIntensity;` to the fragment shader and use it as a multiplier on the core glow.
+
+### Bug 4: Save/load references undefined camera state (lines ~5220, ~5320)
+
+```js
+// In saveScene:
+cameraDistance,       // undefined
+cameraHeight,        // undefined
+cameraAngle,         // undefined
+cameraRotationSpeed, // undefined
+
+// In loadScene:
+if (sceneData.cameraDistance !== undefined) setCameraDistance(sceneData.cameraDistance);
+// setCameraDistance doesn't exist
+```
+
+**Impact:** `saveScene` silently saves `undefined` for these keys. `loadScene` will throw `ReferenceError` when trying to restore camera state.
+
+**Fix:** Remove these references from save/load. Instead, save/restore actual camera position (`cameraRef.current.position`) and controls target (`controlsRef.current.target`).
+
+---
+
+## HIGH-PRIORITY BUGS (Won't Crash But Cause Visible Problems)
+
+### Bug 5: OrbitControls overrides camera fly-to animation (line ~3943)
+
+```js
+// In animation loop, AFTER fly-to interpolation:
+if (controlsRef.current) {
+  controlsRef.current.update();  // ← Overwrites interpolated target
+}
+```
+
+**Impact:** Camera fly-to animations jitter because OrbitControls recalculates the camera target each frame, fighting the interpolation.
+
+**Fix:** Disable controls during fly-to:
+```js
+if (cameraAnimRef.current.active) {
+  controlsRef.current.enabled = false;
+} else {
+  controlsRef.current.enabled = true;
+  controlsRef.current.update();
+}
+```
+
+### Bug 6: Stale closure in keyboard shortcut handler (line ~4214)
+
+Dependency array: `[uiVisible, randomize, clearScene, resetCamera, flyToPreset]`
+
+But the handler body reads `colorPalette`, `simulationMode`, and calls `setColorPalette`, `setSimulationMode`, `showToast` — none of which are in the dependency array.
+
+**Impact:** Number key palette switching (1-6) uses the palette value from the first render. Pressing "2" might set the wrong palette.
+
+**Fix:** Add all read state to the dependency array, or (better) move to refs for values read in the keyboard handler.
+
+### Bug 7: Gravity direction vectors allocated every frame (line ~4011)
+
+6 new `THREE.Vector3` objects created unconditionally every frame inside `animate()`.
+
+**Fix:** Move to a module-level constant:
+```js
+const GRAVITY_VECTORS = {
+  down: new THREE.Vector3(0, -1, 0),
+  up: new THREE.Vector3(0, 1, 0),
+  // ...
+};
+```
+
+### Bug 8: Camera fly-to allocates Vector3 every frame (line ~3866)
+
+```js
+const targetVec = new THREE.Vector3().lerpVectors(anim.startTarget, anim.endTarget, eased);
+```
+
+**Fix:** Pre-allocate on `cameraAnimRef.current`:
+```js
+// At init:
+cameraAnimRef.current.tempVec = new THREE.Vector3();
+// In loop:
+cameraAnimRef.current.tempVec.lerpVectors(anim.startTarget, anim.endTarget, eased);
+```
+
+### Bug 9: `lerpColor` allocates 2 THREE.Color objects per call per frame (line 260)
+
+Called 6+ times per frame during palette transitions = 12+ allocations per frame for ~90 frames.
+
+**Fix:** Use pre-allocated Color objects:
+```js
+const _c1 = new THREE.Color();
+const _c2 = new THREE.Color();
+function lerpColor(color1, color2, t) {
+  _c1.set(color1);
+  _c2.set(color2);
+  return _c1.lerp(_c2, t).clone(); // clone only for the return value
+}
+```
+
+### Bug 10: `gravityDirection` state has no UI control (line ~3231)
+
+`useState('down')` is declared and read every frame in the animation loop, but no dropdown or selector exists in the UI to change it. Users can never change gravity direction.
+
+**Fix:** Add a "Gravity Direction" dropdown in the Global Controls section with options: down, up, left, right, forward, backward.
+
+---
+
+## MEDIUM-PRIORITY ISSUES
+
+### Issue 11: `emitters` state is dead code (line ~3301)
+`const [emitters, setEmitters] = useState([]);` — never updated, never read for rendering. Remove it.
+
+### Issue 12: GPUComputationRenderer render targets not disposed (GPU memory leak)
+`GPUParticleSystem.dispose()` disposes geometry and material but not the internal render targets from `GPUComputationRenderer`. Quality level changes that rebuild the particle system leak VRAM.
+
+### Issue 13: Structure `mass` may not survive React state round-trips
+Structures created with `mass: 1.0` but state updates via spread operator may drop it. N-body mode then reads `undefined || 1.0` silently.
+
+### Issue 14: `reducedMotion` partially enforced
+Sets timeScale and autoPulse but doesn't disable bloom, film grain, chromatic aberration, or particle pulsing as accessibility guidelines recommend.
+
+---
+
+## SONNET BUG FIX PROMPT
+
+```
+You are working on /home/user/visualizer/src/LuminousFlow.jsx (7,618 lines), a single-file React + Three.js GPU particle visualizer.
+
+TASK: Fix all critical and high-priority bugs to produce a working MVP. Do NOT add features, do NOT refactor structure, do NOT add dependencies. Only fix bugs.
+
+BUG FIXES REQUIRED:
+
+1. UNDEFINED STATE SETTERS IN resetCameraControls (~line 5148):
+   The function calls setCameraDistance, setCameraHeight, setCameraAngle, setCameraRotationSpeed — none of which exist as state.
+   FIX: Replace the body of resetCameraControls with:
+   - Call flyToPreset('default') to reset camera position
+   - Set autoRotateSpeed to 0.5 via its existing setter (setAutoRotateSpeed)
+   - Set dofEnabled to false via setDofEnabled
+   - Keep the showToast call
+   Remove references to cameraDistance, cameraHeight, cameraAngle, cameraRotationSpeed from the dependency array too.
+
+2. UNDEFINED setAudioSensitivity IN resetAudioControls (~line 5160):
+   FIX: Add state: const [audioSensitivity, setAudioSensitivity] = useState(1.5);
+   Place it near the other audio state variables (around line 3290-3300).
+   If audioSensitivity is used as a multiplier anywhere in the audio processing logic, wire it up. If not, just add the state so the reset doesn't crash.
+
+3. UNDEFINED uGlowIntensity UNIFORM (~line 4034):
+   The animation loop sets gpuParticlesRef.current.particles.material.uniforms.uGlowIntensity.value but the uniform doesn't exist on the particle material.
+   FIX:
+   a) In GPUParticleSystem constructor, where particle material uniforms are defined (~line 1298-1310), add:
+      uGlowIntensity: { value: 1.5 },
+   b) In the particle fragment shader (getParticleFragmentShader), add:
+      uniform float uGlowIntensity;
+   c) In the fragment shader, multiply the core glow by uGlowIntensity:
+      Change: float core = exp(-dist * 10.0) * 1.5;
+      To:     float core = exp(-dist * 10.0) * uGlowIntensity;
+
+4. SAVE/LOAD REFERENCES UNDEFINED CAMERA STATE (~lines 5220, 5320):
+   FIX: In saveScene, replace cameraDistance/cameraHeight/cameraAngle/cameraRotationSpeed with:
+   - cameraPosition: cameraRef.current ? [cameraRef.current.position.x, cameraRef.current.position.y, cameraRef.current.position.z] : [0, 2, 8],
+   - cameraTarget: controlsRef.current ? [controlsRef.current.target.x, controlsRef.current.target.y, controlsRef.current.target.z] : [0, 0, 0],
+   In loadScene, replace the setCameraDistance/etc calls with:
+   - if (sceneData.cameraPosition) { cameraRef.current.position.set(...sceneData.cameraPosition); }
+   - if (sceneData.cameraTarget) { controlsRef.current.target.set(...sceneData.cameraTarget); }
+   Also remove cameraDistance, cameraHeight, cameraAngle, cameraRotationSpeed, audioSensitivity from the saveScene dependency array (they don't exist as variables).
+
+5. ORBITCONTROLS OVERRIDES FLY-TO (~line 3943):
+   FIX: Change the controls update block in the animation loop from:
+     if (controlsRef.current) {
+       controlsRef.current.update();
+     }
+   To:
+     if (controlsRef.current) {
+       if (cameraAnimRef.current.active) {
+         controlsRef.current.enabled = false;
+       } else {
+         controlsRef.current.enabled = true;
+         controlsRef.current.update();
+       }
+     }
+
+6. STALE CLOSURE IN KEYBOARD HANDLER (~line 4214):
+   The keyboard shortcut useEffect's dependency array is missing several state variables that are read inside the handler.
+   FIX: Create refs for frequently-changing values read in keyboard handlers:
+   a) Add: const colorPaletteRef = useRef(colorPalette);
+      And update it: useEffect(() => { colorPaletteRef.current = colorPalette; }, [colorPalette]);
+   b) In the keyboard handler, read from refs instead of state closures for palette names and simulation mode.
+   c) Or simpler: add colorPalette, simulationMode, showToast to the dependency array. This causes the handler to re-register on every palette change, which is acceptable.
+
+7. GRAVITY VECTORS ALLOCATED EVERY FRAME (~line 4011):
+   FIX: Move the gravityVectors object OUTSIDE the component as a module-level constant:
+   const GRAVITY_VECTORS = {
+     down: new THREE.Vector3(0, -1, 0),
+     up: new THREE.Vector3(0, 1, 0),
+     left: new THREE.Vector3(-1, 0, 0),
+     right: new THREE.Vector3(1, 0, 0),
+     forward: new THREE.Vector3(0, 0, -1),
+     backward: new THREE.Vector3(0, 0, 1),
    };
-   ```
-   Creates 6–7 Vector3 objects per frame unconditionally. Should be a module-level constant.
+   const DEFAULT_GRAVITY = new THREE.Vector3(0, -1, 0);
+   Then in the animate loop, replace with:
+   const gravityDir = GRAVITY_VECTORS[gravityDirection] || DEFAULT_GRAVITY;
 
-3. **OrbitControls fights camera fly-to** (`LuminousFlow.jsx:3778`)
-   `controlsRef.current.update()` runs every frame including during fly-to animation. OrbitControls overwrites the interpolated target, causing jitter. Should set `controls.enabled = false` during animation.
+8. CAMERA FLY-TO Vector3 ALLOCATION (~line 3866):
+   FIX: Add a tempVec to the cameraAnimRef initial value:
+   const cameraAnimRef = useRef({ ..., tempVec: new THREE.Vector3() });
+   In the animate loop, replace:
+     const targetVec = new THREE.Vector3().lerpVectors(...)
+   With:
+     const targetVec = cameraAnimRef.current.tempVec.lerpVectors(...)
 
-4. **Stale closure in keyboard handler** (`LuminousFlow.jsx:4214`)
-   Dependency array is `[uiVisible, randomize, clearScene, resetCamera, flyToPreset]` — missing `colorPalette`, `simulationMode`, `showToast`, and other state accessed inside the handler. Palette switching via number keys will use stale values.
+9. lerpColor ALLOCATIONS (~line 260):
+   FIX: Add module-level reusable Color objects:
+   const _lerpC1 = new THREE.Color();
+   const _lerpC2 = new THREE.Color();
+   function lerpColor(color1, color2, t) {
+     _lerpC1.set(color1);
+     _lerpC2.set(color2);
+     return '#' + _lerpC1.lerp(_lerpC2, t).getHexString();
+   }
+   Return a hex string so it can be used as a color value without keeping a reference to the mutable objects.
 
-5. **`gravityDirection` state is dead** (`LuminousFlow.jsx:3175`)
-   State exists and is read in the animation loop, but no UI control lets the user change it from `'down'`. The gravity direction mapping code runs every frame for no benefit.
+10. ADD GRAVITY DIRECTION UI CONTROL:
+    In the Global Controls section, after the Gravity slider, add a Gravity Direction dropdown:
+    <select value={gravityDirection} onChange={(e) => setGravityDirection(e.target.value)}>
+      <option value="down">Down</option>
+      <option value="up">Up</option>
+      <option value="left">Left</option>
+      <option value="right">Right</option>
+      <option value="forward">Forward</option>
+      <option value="backward">Backward</option>
+    </select>
+    Style it to match the existing select elements in the control panel.
 
-### Medium
+11. REMOVE DEAD emitters STATE (~line 3301):
+    Delete: const [emitters, setEmitters] = useState([]);
+    The expandedSections key 'emitters' can stay (it's just a section toggle name).
 
-6. **Auto-pulse creates Vector3 every trigger** (`LuminousFlow.jsx:3871`) — `new THREE.Vector3(0, 0, 0)` on every pulse. Minor since it's infrequent, but should be a constant.
-
-7. **Structure `mass` not preserved through state updates** — Structures are created with `mass: 1.0` but React state updates may not carry it through, causing N-body mode to use `undefined || 1.0` silently.
-
-8. **GPUComputationRenderer disposal incomplete** — `dispose()` on GPUParticleSystem doesn't release internal render targets from GPUComputationRenderer. Switching quality levels leaks GPU memory.
-
-9. **BokehPass always in composer chain** (`LuminousFlow.jsx:3319`) — Added to composer even when disabled. Costs a render target allocation. Should only add when enabled.
-
----
-
-## PERFORMANCE
-
-1. **Boids: 16 texture lookups per particle per frame** — Each of 65K+ particles samples 16 neighbors from the position and velocity textures. That's 2M+ texture fetches per frame. Works but is the primary bottleneck in boids mode. Reducing to 8 neighbors would halve cost with minimal visual difference.
-
-2. **Curl noise: 6× snoise per particle** — The `curlNoise()` function calls `snoise()` 6 times (finite differences). At 65K particles that's 390K noise evaluations per frame.
-
-3. **Structure force field loop in shader** — Iterates over 8 structure slots unconditionally (with early break). Harmless but the loop bounds should use `min(8, uStructureCount)` for clarity.
-
-4. **No object pooling for shockwaves** — `ShockwaveManager` splices arrays and creates new objects per trigger. Should pool and recycle.
-
----
-
-## DEAD CODE
-
-1. `emitters` state (`line 3221`) — `useState([])` never used. Leftover from pre-GPU particle system.
-2. `reducedMotion` state — Detected via media query but only partially enforced (sets timeScale and autoPulse, doesn't disable bloom/grain/pulsing).
-3. `immersionMode` — Toggle exists but only adds subtle camera Y-drift. No other immersion effects.
-
----
-
-## MISSING FROM PHASES 4–5
-
-These were planned but not built:
-
-- **Save/Load system** (localStorage + JSON export/import)
-- **URL state sharing** (base64 params in URL hash)
-- **Collapsible parameter sections** with per-section reset
-- **Expose missing shader uniforms** (particle size, glow intensity, damping, speed limit, curl scale, bloom radius/threshold, vignette intensity, wave frequency/opacity)
-- **Particle trails** (AfterimagePass)
-- **Smooth palette/mode transitions** (lerp colors over 30 frames)
-- **Performance overlay** (FPS, draw calls, triangles, GPU memory)
-- **Onboarding overlay** (first-visit tooltip walkthrough)
+IMPORTANT:
+- Do NOT refactor into multiple files
+- Do NOT add npm dependencies
+- Do NOT change any working features
+- Fix ONLY the bugs listed above
+- After fixing, ensure the build passes: npm run build
+```
 
 ---
 
 ## CREATIVE FEATURE IDEAS
 
-These are consistent with "premium 3D particle & light sculpture sandbox" and compatible with the existing architecture:
+(Retained from previous analysis — all still applicable and compatible)
 
 ### Tier 1 — High Impact, Medium Effort
 
 **A. Gravity Wells (Interactive Physics Playground)**
-Let users click-and-drag in 3D space to place gravity wells with adjustable mass. Particles orbit, spiral in, and get ejected. Visual: a warped space-time grid effect (distorted wave grid) around each well. This extends the existing attractor system — wells are just attractors with a visual representation (a distortion sphere with fresnel glow).
+Click-and-drag to place gravity wells with adjustable mass. Visual: distortion sphere with fresnel glow. Extends existing attractor system.
 
 **B. Particle Color by Life/Age**
-Add a 4th velocity coloring mode: "Life Gradient" — particles shift from hot (white/yellow) at spawn to cool (blue/purple) as they age, like cooling embers. Uses the existing `life` value already in the position texture W-channel. Add a user-configurable 3-stop color gradient picker.
+4th velocity coloring mode: "Life Gradient" — hot at spawn, cool as they age. Uses existing `life` value in position texture W-channel.
 
 **C. Magnetic Field Lines**
-When in N-body mode, render visible force field lines between structures using StreamlineGeometry (or TubeGeometry along computed paths). Shows the gravitational field topology. Toggle on/off. Lines glow with palette accent color and pulse with field strength.
+Visible force field lines between structures in N-body mode using TubeGeometry along computed paths.
 
 **D. Particle Emission Shapes**
-Instead of always spawning particles in a sphere, let users choose emission shape: Sphere (current), Ring, Plane, Cube, Point. Each remaps the respawn logic in the position shader. A ring emitter + vortex attractor creates a beautiful accretion disk.
+Emission shape selector: Sphere, Ring, Plane, Cube, Point. Remaps respawn logic in position shader.
 
 ### Tier 2 — Medium Impact, Lower Effort
 
-**E. Time Reversal**
-Store the last 300 frames of position/velocity textures in a ring buffer (GPU memory permitting). "Rewind" button plays them backward. Shockwaves implode, boids un-flock, particles flow backward into structures. Visceral and unique.
+**E. Time Reversal** — Ring buffer of position textures, play backward.
+**F. Fractal Noise Terrain** — Ridged multifractal replacing wave grid, particles bounce off it.
+**G. Particle Size by Velocity** — Expose as slider (fast=big vs fast=small).
+**H. Connection Lines** — Proximity web between nearby particles.
 
-**F. Fractal Noise Terrain**
-Replace the current wave grid with a full fractal terrain using 4-octave noise with ridged multifractal. Particles that hit the terrain bounce. Terrain height responds to audio bass. Creates a landscape the particle simulation lives on top of.
+### Tier 3 — Polish
 
-**G. Particle Size by Velocity**
-Already partially implemented (speed affects size in vertex shader) but not user-controllable. Expose as a "Size Response" slider (0 = uniform, 1 = fast=big, -1 = fast=small). Combined with trails, slow particles become tiny dots while fast ones streak.
-
-**H. Connection Lines (Proximity Web)**
-Draw lines between particles that are within a threshold distance. Use LineSegments geometry updated from a GPU readback of positions (sample every 4th frame for performance, only sample first 1000 particles). Creates a web/constellation effect. Toggle + distance threshold slider.
-
-### Tier 3 — Polish & Feel
-
-**I. Reactive Bloom**
-Instead of static bloom, make bloom strength pulse with the average particle velocity. Fast-moving swarms glow bright, calm states dim. Already possible by reading back a velocity statistic from the GPU (or approximating via shockwave state).
-
-**J. Screenshot Mode**
-Freeze time, hide UI, increase resolution to 4K, render 16x MSAA, save. The screenshot infrastructure from Batch C exists but this adds the "beauty shot" workflow.
-
-**K. Preset Thumbnails**
-Render a small offscreen canvas for each preset and show as a thumbnail in the preset gallery. Makes preset selection visual instead of text-only.
-
-**L. MIDI Controller Support**
-Map MIDI CC values to sliders via Web MIDI API. Physical knobs controlling turbulence, bloom, and attractor strength. Natural fit for the audio reactivity system already built.
-
----
-
-## Recommended Implementation Order
-
-| Priority | Items | Rationale |
-|----------|-------|-----------|
-| **1 (fix)** | Bugs #1-5, dead code removal | Stability before features |
-| **2 (complete)** | Phases 4-5 missing features | Save/load is table-stakes for a sandbox |
-| **3 (feature)** | D (Emission Shapes) + B (Life Color) + G (Size Response) | Cheap wins — shader-only, huge visual variety |
-| **4 (feature)** | A (Gravity Wells) + C (Field Lines) | Physics playground identity |
-| **5 (feature)** | H (Connection Lines) + F (Fractal Terrain) | Wow factor |
-| **6 (polish)** | I (Reactive Bloom) + J (Screenshot Mode) + K (Thumbnails) | Professional feel |
-| **7 (stretch)** | E (Time Reversal) + L (MIDI) | Unique differentiators |
+**I. Reactive Bloom** — Bloom strength pulses with average particle velocity.
+**J. Screenshot Mode** — Freeze time, hide UI, 4K render, save.
+**K. Preset Thumbnails** — Offscreen canvas thumbnail per preset.
+**L. MIDI Controller Support** — Web MIDI API mapped to sliders.

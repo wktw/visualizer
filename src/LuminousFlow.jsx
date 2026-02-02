@@ -7,6 +7,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js';
+import { AfterimagePass } from 'three/examples/jsm/postprocessing/AfterimagePass.js';
 import { GPUComputationRenderer } from 'three/examples/jsm/misc/GPUComputationRenderer.js';
 import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
 
@@ -249,6 +250,19 @@ const CAMERA_PRESETS = {
 };
 
 // ============================================================================
+// EASING FUNCTIONS
+// ============================================================================
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function lerpColor(color1, color2, t) {
+  const c1 = new THREE.Color(color1);
+  const c2 = new THREE.Color(color2);
+  return c1.lerp(c2, t);
+}
+
+// ============================================================================
 // KEYBOARD SHORTCUTS
 // ============================================================================
 const KEYBOARD_SHORTCUTS = {
@@ -270,6 +284,7 @@ const KEYBOARD_SHORTCUTS = {
   '-': { action: 'qualityDown', description: 'Decrease quality' },
   'Escape': { action: 'resetCamera', description: 'Reset camera position' },
   '?': { action: 'showHelp', description: 'Show keyboard shortcuts' },
+  'i': { action: 'togglePerfOverlay', description: 'Toggle performance overlay' },
   'Shift+1': { action: 'cameraTopDown', description: 'Camera: Top-down view' },
   'Shift+2': { action: 'cameraSide', description: 'Camera: Side view' },
   'Shift+3': { action: 'cameraCloseUp', description: 'Camera: Close-up view' },
@@ -3126,6 +3141,7 @@ function LuminousFlow() {
   const fxaaPassRef = useRef(null);
   const bloomPassRef = useRef(null);
   const bokehPassRef = useRef(null);
+  const afterimagePassRef = useRef(null);
 
   // Camera animation refs
   const cameraAnimRef = useRef({
@@ -3140,6 +3156,22 @@ function LuminousFlow() {
     duration: 1.5
   });
   const cameraShakeRef = useRef({ intensity: 0, decay: 0.9 });
+
+  // Transition system (Phase 5)
+  const transitionRef = useRef({
+    active: false,
+    params: {},
+    targets: {},
+    progress: 0,
+    duration: 1.0
+  });
+  const paletteTransitionRef = useRef({
+    active: false,
+    currentColors: null,
+    targetColors: null,
+    progress: 0,
+    duration: 1.0
+  });
 
   // Shockwave and interaction refs
   const shockwaveManagerRef = useRef(null);
@@ -3181,6 +3213,15 @@ function LuminousFlow() {
   const [reducedMotion, setReducedMotion] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
+  const [showPerfOverlay, setShowPerfOverlay] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    try {
+      return localStorage.getItem('luminousflow_onboarded') !== 'true';
+    } catch (e) {
+      return true; // Show by default if localStorage fails
+    }
+  });
+  const [onboardingStep, setOnboardingStep] = useState(1);
   const [toasts, setToasts] = useState([]);
   const pausedRef = useRef(false);
 
@@ -3252,6 +3293,10 @@ function LuminousFlow() {
   const [bloomThreshold, setBloomThreshold] = useState(0.0);
   const [filmGrainIntensity, setFilmGrainIntensity] = useState(0.03);
   const [vignetteIntensity, setVignetteIntensity] = useState(1.2);
+
+  // Particle trails (Phase 5)
+  const [trailsEnabled, setTrailsEnabled] = useState(false);
+  const [trailLength, setTrailLength] = useState(0.85);
 
   const [emitters, setEmitters] = useState([]);
   const [structures, setStructures] = useState([]);
@@ -3369,6 +3414,12 @@ function LuminousFlow() {
 
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
+
+    // Afterimage pass for particle trails - right after render
+    const afterimagePass = new AfterimagePass(0.85);
+    afterimagePass.enabled = false; // Disabled by default
+    composer.addPass(afterimagePass);
+    afterimagePassRef.current = afterimagePass;
 
     // Bokeh (Depth of Field) pass - after render, before bloom
     const bokehPass = new BokehPass(scene, camera, {
@@ -3834,6 +3885,59 @@ function LuminousFlow() {
         shake.intensity *= shake.decay;
       }
 
+      // Handle palette color transitions (Phase 5)
+      if (paletteTransitionRef.current.active) {
+        const trans = paletteTransitionRef.current;
+        trans.progress += deltaTime / trans.duration;
+
+        if (trans.progress >= 1.0) {
+          trans.progress = 1.0;
+          trans.active = false;
+        }
+
+        const t = easeInOutCubic(trans.progress);
+
+        // Interpolate colors
+        if (trans.currentColors && trans.targetColors) {
+          const interpolatedPrimary = lerpColor(trans.currentColors.primary, trans.targetColors.primary, t);
+          const interpolatedSecondary = lerpColor(trans.currentColors.secondary, trans.targetColors.secondary, t);
+          const interpolatedAccent = lerpColor(trans.currentColors.accent, trans.targetColors.accent, t);
+
+          // Update GPU particles
+          if (gpuParticlesRef.current) {
+            gpuParticlesRef.current.setColors(interpolatedPrimary, interpolatedSecondary, interpolatedAccent);
+          }
+
+          // Update wave grid
+          if (waveGridRef.current) {
+            waveGridRef.current.setColors(interpolatedPrimary, interpolatedSecondary, interpolatedAccent);
+          }
+
+          // Update background
+          if (backgroundRef.current) {
+            const bg1 = lerpColor(trans.currentColors.background[0], trans.targetColors.background[0], t);
+            const bg2 = lerpColor(trans.currentColors.background[1], trans.targetColors.background[1], t);
+            const bg3 = lerpColor(trans.currentColors.background[2], trans.targetColors.background[2], t);
+            backgroundRef.current.setColors(bg1, bg2, bg3);
+          }
+
+          // Update structures
+          structuresRef.current.forEach(structure => {
+            if (structure.material) {
+              structure.material.color = interpolatedPrimary;
+              structure.material.emissive = interpolatedAccent;
+            }
+          });
+
+          // Update ribbons
+          ribbonsRef.current.forEach(ribbon => {
+            if (ribbon.material) {
+              ribbon.material.color = interpolatedSecondary;
+            }
+          });
+        }
+      }
+
       // Update controls
       if (controlsRef.current) {
         controlsRef.current.update();
@@ -4004,6 +4108,10 @@ function LuminousFlow() {
       }
       if (vignettePassRef.current) {
         vignettePassRef.current.uniforms.darkness.value = vignetteIntensity;
+      }
+      if (afterimagePassRef.current) {
+        afterimagePassRef.current.enabled = trailsEnabled;
+        afterimagePassRef.current.uniforms.damp.value = trailLength;
       }
 
       // Audio reactivity system
@@ -4289,6 +4397,9 @@ function LuminousFlow() {
         case 'showHelp':
           setShowHelp(prev => !prev);
           break;
+        case 'togglePerfOverlay':
+          setShowPerfOverlay(prev => !prev);
+          break;
         default:
           break;
       }
@@ -4412,26 +4523,23 @@ function LuminousFlow() {
     }
   }, [velocityColorMode]);
 
-  // Apply color palette
+  // Apply color palette with smooth transition (Phase 5)
   useEffect(() => {
     const palette = COLOR_PALETTES[colorPalette];
     if (!palette) return;
 
-    // Update background colors
-    if (backgroundRef.current) {
-      backgroundRef.current.setColors(palette.background);
-    }
+    // Get current palette colors (or use the new palette if no transition is active)
+    const currentPalette = paletteTransitionRef.current.targetColors || COLOR_PALETTES[colorPalette];
 
-    // Update GPU particles
-    if (gpuParticlesRef.current) {
-      gpuParticlesRef.current.setColors(palette.primary, palette.secondary, palette.accent);
-    }
-    
-    // Update wave grid colors
-    if (waveGridRef.current) {
-      waveGridRef.current.setColors(palette.primary, palette.secondary, palette.accent);
-    }
-    
+    // Start palette transition
+    paletteTransitionRef.current = {
+      active: true,
+      currentColors: currentPalette,
+      targetColors: palette,
+      progress: 0,
+      duration: 1.0
+    };
+
     // Apply bloom presets for this palette
     const bloomPreset = BLOOM_PRESETS[colorPalette];
     if (bloomPreset && bloomPassRef.current) {
@@ -4440,17 +4548,7 @@ function LuminousFlow() {
       bloomPassRef.current.threshold = bloomPreset.threshold;
     }
 
-    // Update structures
-    structuresRef.current.forEach(structure => {
-      structure.setColor(palette.primary);
-    });
-
-    // Update ribbons
-    ribbonsRef.current.forEach(ribbon => {
-      ribbon.setColor(palette.secondary);
-    });
-
-    // Update state for UI
+    // Update state for UI (structures and ribbons will be updated by the transition in the animation loop)
     setStructures(prev => prev.map(s => ({
       ...s,
       color: palette.primary
@@ -5372,6 +5470,28 @@ function LuminousFlow() {
     }
   }, [showToast]);
 
+  // Onboarding functions
+  const nextOnboardingStep = useCallback(() => {
+    if (onboardingStep < 3) {
+      setOnboardingStep(prev => prev + 1);
+    } else {
+      completeOnboarding();
+    }
+  }, [onboardingStep]);
+
+  const skipOnboarding = useCallback(() => {
+    completeOnboarding();
+  }, []);
+
+  const completeOnboarding = useCallback(() => {
+    try {
+      localStorage.setItem('luminousflow_onboarded', 'true');
+    } catch (e) {
+      console.warn('Failed to save onboarding state:', e);
+    }
+    setShowOnboarding(false);
+  }, []);
+
   // Toggle item expansion
   const toggleItem = (id) => {
     setExpandedItems(prev => ({
@@ -5428,6 +5548,177 @@ function LuminousFlow() {
           </div>
         ))}
       </div>
+
+      {/* Performance Overlay */}
+      {showPerfOverlay && (
+        <div style={{
+          position: 'fixed',
+          top: '10px',
+          left: '10px',
+          background: 'rgba(0, 0, 0, 0.7)',
+          backdropFilter: 'blur(5px)',
+          color: '#0f0',
+          fontFamily: 'monospace',
+          fontSize: '11px',
+          padding: '8px',
+          borderRadius: '4px',
+          pointerEvents: 'none',
+          zIndex: 1000,
+          lineHeight: '1.6'
+        }}>
+          <div><strong>PERFORMANCE STATS</strong></div>
+          <div>FPS: {currentFps}</div>
+          <div>Particles: {(particleCount / 1000).toFixed(0)}K</div>
+          <div>Quality: {qualityLevel}</div>
+          <div>Mode: {simulationMode}</div>
+          {rendererRef.current && (
+            <>
+              <div>Calls: {rendererRef.current.info.render.calls}</div>
+              <div>Triangles: {(rendererRef.current.info.render.triangles / 1000).toFixed(1)}K</div>
+              <div>Textures: {rendererRef.current.info.memory.textures}</div>
+              <div>Geometries: {rendererRef.current.info.memory.geometries}</div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Onboarding Overlay */}
+      {showOnboarding && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(10, 10, 20, 0.9)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2000,
+          padding: '20px'
+        }}>
+          <div style={{
+            maxWidth: '400px',
+            background: 'rgba(20, 20, 30, 0.95)',
+            borderRadius: '12px',
+            padding: '30px',
+            boxShadow: `0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px ${COLOR_PALETTES[colorPalette]?.primary || '#00ffaa'}`,
+            textAlign: 'center'
+          }}>
+            <div style={{
+              fontSize: '18px',
+              fontWeight: '600',
+              marginBottom: '20px',
+              color: COLOR_PALETTES[colorPalette]?.primary || '#00ffaa'
+            }}>
+              {onboardingStep === 1 && 'Welcome to Luminous Flow'}
+              {onboardingStep === 2 && 'Customize Everything'}
+              {onboardingStep === 3 && 'Keyboard Shortcuts'}
+            </div>
+
+            <div style={{
+              fontSize: '14px',
+              lineHeight: '1.6',
+              marginBottom: '30px',
+              color: '#ccc'
+            }}>
+              {onboardingStep === 1 && (
+                <>
+                  <div style={{ fontSize: '48px', marginBottom: '15px' }}>🖱️</div>
+                  <div>Click anywhere on the canvas to create beautiful shockwave pulses that interact with particles and structures.</div>
+                </>
+              )}
+              {onboardingStep === 2 && (
+                <>
+                  <div style={{ fontSize: '48px', marginBottom: '15px' }}>⚙️ →</div>
+                  <div>Open the side panel to customize particles, add structures, change colors, adjust physics, and create your own unique scenes.</div>
+                </>
+              )}
+              {onboardingStep === 3 && (
+                <>
+                  <div style={{ fontSize: '48px', marginBottom: '15px' }}>⌨️</div>
+                  <div>Press <strong style={{ color: COLOR_PALETTES[colorPalette]?.accent || '#aa55ff' }}>?</strong> anytime to see all available keyboard shortcuts for quick access to features.</div>
+                </>
+              )}
+            </div>
+
+            <div style={{
+              display: 'flex',
+              gap: '10px',
+              justifyContent: 'center'
+            }}>
+              <button
+                onClick={nextOnboardingStep}
+                style={{
+                  padding: '12px 24px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  background: COLOR_PALETTES[colorPalette]?.primary || '#00ffaa',
+                  color: '#000',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.transform = 'scale(1.05)';
+                  e.target.style.boxShadow = `0 0 20px ${COLOR_PALETTES[colorPalette]?.primary || '#00ffaa'}`;
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.transform = 'scale(1)';
+                  e.target.style.boxShadow = 'none';
+                }}
+              >
+                {onboardingStep < 3 ? 'Next' : 'Get Started'}
+              </button>
+            </div>
+
+            <div style={{
+              marginTop: '20px',
+              fontSize: '12px',
+              opacity: 0.6
+            }}>
+              <button
+                onClick={skipOnboarding}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#aaa',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  fontSize: '12px'
+                }}
+                onMouseEnter={(e) => { e.target.style.color = '#fff'; }}
+                onMouseLeave={(e) => { e.target.style.color = '#aaa'; }}
+              >
+                Skip tutorial
+              </button>
+            </div>
+
+            <div style={{
+              marginTop: '15px',
+              display: 'flex',
+              gap: '8px',
+              justifyContent: 'center'
+            }}>
+              {[1, 2, 3].map(step => (
+                <div
+                  key={step}
+                  style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: step === onboardingStep
+                      ? (COLOR_PALETTES[colorPalette]?.primary || '#00ffaa')
+                      : 'rgba(255, 255, 255, 0.3)'
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Help Modal - Keyboard Shortcuts */}
       {showHelp && (
@@ -5936,6 +6227,19 @@ function LuminousFlow() {
               value={chromaticIntensity}
               onChange={setChromaticIntensity}
               min={0.001} max={0.01} step={0.001}
+            />
+          )}
+          <Checkbox
+            label="Particle Trails"
+            checked={trailsEnabled}
+            onChange={setTrailsEnabled}
+          />
+          {trailsEnabled && (
+            <Slider
+              label="Trail Length"
+              value={trailLength}
+              onChange={setTrailLength}
+              min={0.7} max={0.98} step={0.01}
             />
           )}
         </Section>

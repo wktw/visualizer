@@ -256,11 +256,28 @@ function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
+// Pre-allocated Color objects for lerpColor to avoid allocations
+const _lerpC1 = new THREE.Color();
+const _lerpC2 = new THREE.Color();
+
 function lerpColor(color1, color2, t) {
-  const c1 = new THREE.Color(color1);
-  const c2 = new THREE.Color(color2);
-  return c1.lerp(c2, t);
+  _lerpC1.set(color1);
+  _lerpC2.set(color2);
+  return '#' + _lerpC1.lerp(_lerpC2, t).getHexString();
 }
+
+// ============================================================================
+// GRAVITY DIRECTION VECTORS
+// ============================================================================
+const GRAVITY_VECTORS = {
+  down: new THREE.Vector3(0, -1, 0),
+  up: new THREE.Vector3(0, 1, 0),
+  left: new THREE.Vector3(-1, 0, 0),
+  right: new THREE.Vector3(1, 0, 0),
+  forward: new THREE.Vector3(0, 0, -1),
+  backward: new THREE.Vector3(0, 0, 1)
+};
+const DEFAULT_GRAVITY = new THREE.Vector3(0, -1, 0);
 
 // ============================================================================
 // KEYBOARD SHORTCUTS
@@ -1306,7 +1323,8 @@ class GPUParticleSystem {
         uColor3: { value: new THREE.Color(0xaa55ff) },
         uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
         uSize: { value: 4.0 },
-        uColorMode: { value: 0 } // 0=speed, 1=direction, 2=acceleration
+        uColorMode: { value: 0 }, // 0=speed, 1=direction, 2=acceleration
+        uGlowIntensity: { value: 1.5 }
       },
       vertexShader: `
         uniform sampler2D texturePosition;
@@ -1373,6 +1391,8 @@ class GPUParticleSystem {
         }
       `,
       fragmentShader: `
+        uniform float uGlowIntensity;
+
         varying vec3 vColor;
         varying float vAlpha;
         varying float vLife;
@@ -1382,7 +1402,7 @@ class GPUParticleSystem {
           float dist = length(center);
 
           // Soft glow with bright core
-          float core = exp(-dist * 10.0) * 1.5;
+          float core = exp(-dist * 10.0) * uGlowIntensity;
           float glow = exp(-dist * 4.0);
           float outer = exp(-dist * 2.0) * 0.4;
 
@@ -3153,7 +3173,8 @@ function LuminousFlow() {
     startFov: 75,
     endFov: 75,
     progress: 0,
-    duration: 1.5
+    duration: 1.5,
+    tempVec: new THREE.Vector3()
   });
   const cameraShakeRef = useRef({ intensity: 0, decay: 0.9 });
 
@@ -3270,6 +3291,7 @@ function LuminousFlow() {
   const [audioMid, setAudioMid] = useState(0);
   const [audioHigh, setAudioHigh] = useState(0);
   const [beatThreshold, setBeatThreshold] = useState(0.7);
+  const [audioSensitivity, setAudioSensitivity] = useState(1.5);
 
   // Screenshot/recording state
   const [isRecording, setIsRecording] = useState(false);
@@ -3298,7 +3320,6 @@ function LuminousFlow() {
   const [trailsEnabled, setTrailsEnabled] = useState(false);
   const [trailLength, setTrailLength] = useState(0.85);
 
-  const [emitters, setEmitters] = useState([]);
   const [structures, setStructures] = useState([]);
   const [ribbons, setRibbons] = useState([]);
   
@@ -3863,7 +3884,7 @@ function LuminousFlow() {
         cameraRef.current.position.lerpVectors(anim.startPos, anim.endPos, eased);
 
         // Interpolate target
-        const targetVec = new THREE.Vector3().lerpVectors(anim.startTarget, anim.endTarget, eased);
+        const targetVec = cameraAnimRef.current.tempVec.lerpVectors(anim.startTarget, anim.endTarget, eased);
         controlsRef.current.target.copy(targetVec);
 
         // Interpolate FOV
@@ -3940,7 +3961,12 @@ function LuminousFlow() {
 
       // Update controls
       if (controlsRef.current) {
-        controlsRef.current.update();
+        if (cameraAnimRef.current.active) {
+          controlsRef.current.enabled = false;
+        } else {
+          controlsRef.current.enabled = true;
+          controlsRef.current.update();
+        }
       }
 
       // Update shockwave manager
@@ -4007,15 +4033,7 @@ function LuminousFlow() {
         gpuParticlesRef.current.setAttractors(attractorList);
 
         // Update gravity based on gravityDirection state
-        const gravityVectors = {
-          'down': new THREE.Vector3(0, -1, 0),
-          'up': new THREE.Vector3(0, 1, 0),
-          'left': new THREE.Vector3(-1, 0, 0),
-          'right': new THREE.Vector3(1, 0, 0),
-          'forward': new THREE.Vector3(0, 0, -1),
-          'backward': new THREE.Vector3(0, 0, 1)
-        };
-        const gravityDir = gravityVectors[gravityDirection] || new THREE.Vector3(0, -1, 0);
+        const gravityDir = GRAVITY_VECTORS[gravityDirection] || DEFAULT_GRAVITY;
         gpuParticlesRef.current.setGravity(gravityDir, gravity * 0.5);
 
         // Pass structure data for force fields
@@ -4407,7 +4425,7 @@ function LuminousFlow() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [uiVisible, randomize, clearScene, resetCamera, flyToPreset]);
+  }, [uiVisible, randomize, clearScene, resetCamera, flyToPreset, colorPalette, simulationMode, showToast]);
 
   // Sync paused state to ref
   useEffect(() => {
@@ -5145,15 +5163,13 @@ function LuminousFlow() {
   }, [showToast]);
 
   const resetCameraControls = useCallback(() => {
-    setCameraDistance(15);
-    setCameraHeight(8);
-    setCameraAngle(0.8);
-    setCameraRotationSpeed(0.5);
+    flyToPreset('default');
+    setAutoRotateSpeed(0.5);
     setDofEnabled(false);
     setDofFocus(8.0);
     setDofAperture(0.025);
     showToast('Camera Controls reset to defaults', 'success');
-  }, [showToast]);
+  }, [showToast, flyToPreset]);
 
   const resetAudioControls = useCallback(() => {
     setAudioReactivity(false);
@@ -5218,10 +5234,8 @@ function LuminousFlow() {
       waveParticleSize,
 
       // Camera
-      cameraDistance,
-      cameraHeight,
-      cameraAngle,
-      cameraRotationSpeed,
+      cameraPosition: cameraRef.current ? [cameraRef.current.position.x, cameraRef.current.position.y, cameraRef.current.position.z] : [0, 2, 8],
+      cameraTarget: controlsRef.current ? [controlsRef.current.target.x, controlsRef.current.target.y, controlsRef.current.target.z] : [0, 0, 0],
       dofEnabled,
       dofFocus,
       dofAperture,
@@ -5257,7 +5271,7 @@ function LuminousFlow() {
       console.error('Failed to save scene:', e);
       showToast('Failed to save scene', 'error');
     }
-  }, [sceneName, savedScenes, showToast, timeScale, gravity, turbulence, bloomIntensity, bloomRadius, bloomThreshold, vignetteIntensity, backgroundStyle, colorPalette, filmGrain, filmGrainIntensity, chromaticAberration, chromaticIntensity, simulationMode, particleSize, particleGlow, particleSpeedLimit, particleDamping, curlNoiseScale, curlNoiseSpeed, spawnRadius, mouseFollow, autoPulse, pulseInterval, boidsSeparation, boidsAlignment, boidsCohesion, boidsNeighborRadius, boidsMaxSpeed, nbodyGravConstant, nbodySoftening, nbodyDamping, waveGridEnabled, waveAmplitude, waveSpeed, waveFrequency, waveOpacity, waveParticleSize, cameraDistance, cameraHeight, cameraAngle, cameraRotationSpeed, dofEnabled, dofFocus, dofAperture, audioReactivity, audioSensitivity, structures, ribbons, attractors, qualityLevel, autoQuality]);
+  }, [sceneName, savedScenes, showToast, timeScale, gravity, turbulence, bloomIntensity, bloomRadius, bloomThreshold, vignetteIntensity, backgroundStyle, colorPalette, filmGrain, filmGrainIntensity, chromaticAberration, chromaticIntensity, simulationMode, particleSize, particleGlow, particleSpeedLimit, particleDamping, curlNoiseScale, curlNoiseSpeed, spawnRadius, mouseFollow, autoPulse, pulseInterval, boidsSeparation, boidsAlignment, boidsCohesion, boidsNeighborRadius, boidsMaxSpeed, nbodyGravConstant, nbodySoftening, nbodyDamping, waveGridEnabled, waveAmplitude, waveSpeed, waveFrequency, waveOpacity, waveParticleSize, dofEnabled, dofFocus, dofAperture, audioReactivity, audioSensitivity, structures, ribbons, attractors, qualityLevel, autoQuality]);
 
   const loadScene = useCallback(() => {
     if (!selectedScene || !savedScenes[selectedScene]) {
@@ -5317,10 +5331,12 @@ function LuminousFlow() {
       if (sceneData.waveParticleSize !== undefined) setWaveParticleSize(sceneData.waveParticleSize);
 
       // Camera
-      if (sceneData.cameraDistance !== undefined) setCameraDistance(sceneData.cameraDistance);
-      if (sceneData.cameraHeight !== undefined) setCameraHeight(sceneData.cameraHeight);
-      if (sceneData.cameraAngle !== undefined) setCameraAngle(sceneData.cameraAngle);
-      if (sceneData.cameraRotationSpeed !== undefined) setCameraRotationSpeed(sceneData.cameraRotationSpeed);
+      if (sceneData.cameraPosition && cameraRef.current) {
+        cameraRef.current.position.set(...sceneData.cameraPosition);
+      }
+      if (sceneData.cameraTarget && controlsRef.current) {
+        controlsRef.current.target.set(...sceneData.cameraTarget);
+      }
       if (sceneData.dofEnabled !== undefined) setDofEnabled(sceneData.dofEnabled);
       if (sceneData.dofFocus !== undefined) setDofFocus(sceneData.dofFocus);
       if (sceneData.dofAperture !== undefined) setDofAperture(sceneData.dofAperture);
@@ -6160,6 +6176,12 @@ function LuminousFlow() {
             value={gravity}
             onChange={setGravity}
             min={-2} max={2} step={0.1}
+          />
+          <Select
+            label="Gravity Direction"
+            value={gravityDirection}
+            onChange={setGravityDirection}
+            options={['down', 'up', 'left', 'right', 'forward', 'backward']}
           />
           <Slider
             label="Turbulence"

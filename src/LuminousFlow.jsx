@@ -6,6 +6,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js';
 import { GPUComputationRenderer } from 'three/examples/jsm/misc/GPUComputationRenderer.js';
 import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
 
@@ -235,6 +236,19 @@ const SCENE_PRESETS = {
 };
 
 // ============================================================================
+// CAMERA PRESETS
+// ============================================================================
+const CAMERA_PRESETS = {
+  default: { position: [0, 2, 8], target: [0, 0, 0], fov: 75 },
+  topDown: { position: [0, 15, 0.1], target: [0, 0, 0], fov: 60 },
+  side: { position: [12, 0, 0], target: [0, 0, 0], fov: 70 },
+  closeUp: { position: [0, 0.5, 3], target: [0, 0, 0], fov: 50 },
+  wide: { position: [0, 5, 18], target: [0, 0, 0], fov: 90 },
+  cinematic: { position: [6, 4, 6], target: [0, -1, 0], fov: 65 },
+  low: { position: [4, -2, 4], target: [0, 1, 0], fov: 80 }
+};
+
+// ============================================================================
 // KEYBOARD SHORTCUTS
 // ============================================================================
 const KEYBOARD_SHORTCUTS = {
@@ -255,7 +269,13 @@ const KEYBOARD_SHORTCUTS = {
   '=': { action: 'qualityUp', description: 'Increase quality' },
   '-': { action: 'qualityDown', description: 'Decrease quality' },
   'Escape': { action: 'resetCamera', description: 'Reset camera position' },
-  '?': { action: 'showHelp', description: 'Show keyboard shortcuts' }
+  '?': { action: 'showHelp', description: 'Show keyboard shortcuts' },
+  'Shift+1': { action: 'cameraTopDown', description: 'Camera: Top-down view' },
+  'Shift+2': { action: 'cameraSide', description: 'Camera: Side view' },
+  'Shift+3': { action: 'cameraCloseUp', description: 'Camera: Close-up view' },
+  'Shift+4': { action: 'cameraWide', description: 'Camera: Wide view' },
+  'Shift+5': { action: 'cameraCinematic', description: 'Camera: Cinematic view' },
+  'Shift+6': { action: 'cameraLow', description: 'Camera: Low angle view' }
 };
 
 // ============================================================================
@@ -3090,7 +3110,22 @@ function LuminousFlow() {
   const chromaticAberrationPassRef = useRef(null);
   const fxaaPassRef = useRef(null);
   const bloomPassRef = useRef(null);
-  
+  const bokehPassRef = useRef(null);
+
+  // Camera animation refs
+  const cameraAnimRef = useRef({
+    active: false,
+    startPos: new THREE.Vector3(),
+    endPos: new THREE.Vector3(),
+    startTarget: new THREE.Vector3(),
+    endTarget: new THREE.Vector3(),
+    startFov: 75,
+    endFov: 75,
+    progress: 0,
+    duration: 1.5
+  });
+  const cameraShakeRef = useRef({ intensity: 0, decay: 0.9 });
+
   // Shockwave and interaction refs
   const shockwaveManagerRef = useRef(null);
   const mouseAttractorRef = useRef(null);
@@ -3206,6 +3241,11 @@ function LuminousFlow() {
   const [nbodySoftening, setNbodySoftening] = useState(0.5);
   const [nbodyDamping, setNbodyDamping] = useState(0.999);
 
+  // Camera state
+  const [dofEnabled, setDofEnabled] = useState(false);
+  const [dofFocus, setDofFocus] = useState(8.0);
+  const [dofAperture, setDofAperture] = useState(0.025);
+
   const [expandedSections, setExpandedSections] = useState({
     global: true,
     emitters: true,
@@ -3269,6 +3309,16 @@ function LuminousFlow() {
 
     const renderPass = new RenderPass(scene, camera);
     composer.addPass(renderPass);
+
+    // Bokeh (Depth of Field) pass - after render, before bloom
+    const bokehPass = new BokehPass(scene, camera, {
+      focus: 8.0,
+      aperture: 0.025,
+      maxblur: 0.01
+    });
+    bokehPass.enabled = false; // Disabled by default
+    composer.addPass(bokehPass);
+    bokehPassRef.current = bokehPass;
 
     const bloomPass = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
@@ -3681,11 +3731,53 @@ function LuminousFlow() {
       const deltaTime = clockRef.current.getDelta();
       const elapsedTime = clockRef.current.getElapsedTime();
 
+      // Update camera animation (fly-to)
+      if (cameraAnimRef.current.active) {
+        const anim = cameraAnimRef.current;
+        anim.progress += deltaTime / anim.duration;
+
+        if (anim.progress >= 1.0) {
+          anim.progress = 1.0;
+          anim.active = false;
+        }
+
+        // Ease-in-out cubic
+        const t = anim.progress;
+        const eased = t < 0.5
+          ? 4 * t * t * t
+          : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+        // Interpolate position
+        cameraRef.current.position.lerpVectors(anim.startPos, anim.endPos, eased);
+
+        // Interpolate target
+        const targetVec = new THREE.Vector3().lerpVectors(anim.startTarget, anim.endTarget, eased);
+        controlsRef.current.target.copy(targetVec);
+
+        // Interpolate FOV
+        cameraRef.current.fov = anim.startFov + (anim.endFov - anim.startFov) * eased;
+        cameraRef.current.updateProjectionMatrix();
+      }
+
+      // Apply camera shake
+      if (cameraShakeRef.current.intensity > 0.001) {
+        const shake = cameraShakeRef.current;
+        const offsetX = (Math.random() - 0.5) * shake.intensity;
+        const offsetY = (Math.random() - 0.5) * shake.intensity;
+        const offsetZ = (Math.random() - 0.5) * shake.intensity;
+
+        cameraRef.current.position.x += offsetX;
+        cameraRef.current.position.y += offsetY;
+        cameraRef.current.position.z += offsetZ;
+
+        shake.intensity *= shake.decay;
+      }
+
       // Update controls
       if (controlsRef.current) {
         controlsRef.current.update();
       }
-      
+
       // Update shockwave manager
       if (shockwaveManagerRef.current) {
         shockwaveManagerRef.current.update(deltaTime);
@@ -3818,6 +3910,15 @@ function LuminousFlow() {
       // Update chromatic aberration time
       if (chromaticAberrationPassRef.current && chromaticAberrationPassRef.current.enabled) {
         chromaticAberrationPassRef.current.uniforms.uTime.value = elapsedTime;
+      }
+
+      // Update depth of field
+      if (bokehPassRef.current) {
+        bokehPassRef.current.enabled = dofEnabled;
+        if (dofEnabled) {
+          bokehPassRef.current.uniforms.focus.value = dofFocus;
+          bokehPassRef.current.uniforms.aperture.value = dofAperture;
+        }
       }
 
       // Audio reactivity system
@@ -4009,10 +4110,15 @@ function LuminousFlow() {
       if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA' || event.target.tagName === 'SELECT') {
         return;
       }
-      
-      const key = event.key.toLowerCase();
-      const shortcut = KEYBOARD_SHORTCUTS[key] || KEYBOARD_SHORTCUTS[event.key];
-      
+
+      // Build shortcut key with modifiers
+      let shortcutKey = event.key.toLowerCase();
+      if (event.shiftKey && event.key !== 'Shift') {
+        shortcutKey = `Shift+${event.key}`;
+      }
+
+      const shortcut = KEYBOARD_SHORTCUTS[shortcutKey] || KEYBOARD_SHORTCUTS[event.key];
+
       if (!shortcut) return;
       
       event.preventDefault();
@@ -4077,6 +4183,24 @@ function LuminousFlow() {
           resetCamera();
           showToast('Camera reset', 'info');
           break;
+        case 'cameraTopDown':
+          flyToPreset('topDown');
+          break;
+        case 'cameraSide':
+          flyToPreset('side');
+          break;
+        case 'cameraCloseUp':
+          flyToPreset('closeUp');
+          break;
+        case 'cameraWide':
+          flyToPreset('wide');
+          break;
+        case 'cameraCinematic':
+          flyToPreset('cinematic');
+          break;
+        case 'cameraLow':
+          flyToPreset('low');
+          break;
         case 'showHelp':
           setShowHelp(prev => !prev);
           break;
@@ -4084,10 +4208,10 @@ function LuminousFlow() {
           break;
       }
     };
-    
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [uiVisible, randomize, clearScene, resetCamera]);
+  }, [uiVisible, randomize, clearScene, resetCamera, flyToPreset]);
 
   // Sync paused state to ref
   useEffect(() => {
@@ -4484,6 +4608,31 @@ function LuminousFlow() {
     }
   }, []);
 
+  // Fly camera to position with smooth animation
+  const flyTo = useCallback((position, target, fov, duration = 1.5) => {
+    if (!cameraRef.current || !controlsRef.current) return;
+
+    const anim = cameraAnimRef.current;
+    anim.startPos.copy(cameraRef.current.position);
+    anim.endPos.set(...position);
+    anim.startTarget.copy(controlsRef.current.target);
+    anim.endTarget.set(...target);
+    anim.startFov = cameraRef.current.fov;
+    anim.endFov = fov;
+    anim.progress = 0;
+    anim.duration = duration;
+    anim.active = true;
+  }, []);
+
+  // Fly to camera preset
+  const flyToPreset = useCallback((presetName) => {
+    const preset = CAMERA_PRESETS[presetName];
+    if (preset) {
+      flyTo(preset.position, preset.target, preset.fov);
+      showToast(`Camera: ${presetName}`, 'info');
+    }
+  }, [flyTo, showToast]);
+
   // Show toast notification
   const showToast = useCallback((message, type = 'info') => {
     const id = Date.now();
@@ -4504,6 +4653,10 @@ function LuminousFlow() {
         3.0,   // thickness
         8.0    // expansion speed
       );
+
+      // Trigger camera shake
+      cameraShakeRef.current.intensity = 0.15;
+
       showToast('Pulse triggered!', 'success');
     }
   }, [showToast]);
@@ -5741,6 +5894,107 @@ function LuminousFlow() {
           expanded={expandedSections.camera}
           onToggle={() => toggleSection('camera')}
         >
+          {/* Camera Presets */}
+          <div style={{
+            padding: '12px',
+            background: 'rgba(100, 150, 255, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(100, 150, 255, 0.3)',
+            marginBottom: '12px'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#6496ff'
+            }}>
+              Camera Presets
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
+              <button onClick={() => flyToPreset('default')} style={{ ...buttonStyle, fontSize: '10px', padding: '6px' }}>
+                Default
+              </button>
+              <button onClick={() => flyToPreset('topDown')} style={{ ...buttonStyle, fontSize: '10px', padding: '6px' }}>
+                Top-Down
+              </button>
+              <button onClick={() => flyToPreset('side')} style={{ ...buttonStyle, fontSize: '10px', padding: '6px' }}>
+                Side View
+              </button>
+              <button onClick={() => flyToPreset('closeUp')} style={{ ...buttonStyle, fontSize: '10px', padding: '6px' }}>
+                Close-Up
+              </button>
+              <button onClick={() => flyToPreset('wide')} style={{ ...buttonStyle, fontSize: '10px', padding: '6px' }}>
+                Wide
+              </button>
+              <button onClick={() => flyToPreset('cinematic')} style={{ ...buttonStyle, fontSize: '10px', padding: '6px' }}>
+                Cinematic
+              </button>
+              <button onClick={() => flyToPreset('low')} style={{ ...buttonStyle, fontSize: '10px', padding: '6px' }}>
+                Low Angle
+              </button>
+            </div>
+
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              Smooth camera transitions with Shift+1-6 shortcuts
+            </div>
+          </div>
+
+          {/* Depth of Field */}
+          <div style={{
+            padding: '12px',
+            background: 'rgba(255, 150, 100, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(255, 150, 100, 0.3)',
+            marginBottom: '12px'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#ff9664'
+            }}>
+              Depth of Field
+            </div>
+
+            <Checkbox
+              label="Enable DOF (Bokeh Effect)"
+              checked={dofEnabled}
+              onChange={setDofEnabled}
+            />
+
+            {dofEnabled && (
+              <>
+                <Slider
+                  label="Focus Distance"
+                  value={dofFocus}
+                  onChange={setDofFocus}
+                  min={1} max={20} step={0.5}
+                />
+                <Slider
+                  label="Blur Amount (Aperture)"
+                  value={dofAperture}
+                  onChange={setDofAperture}
+                  min={0.001} max={0.1} step={0.001}
+                />
+              </>
+            )}
+
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              Cinematic depth of field effect with bokeh blur
+            </div>
+          </div>
+
           <Checkbox
             label="Auto Rotate"
             checked={autoRotate}

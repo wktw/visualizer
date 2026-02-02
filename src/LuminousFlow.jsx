@@ -1851,6 +1851,12 @@ class WaveGrid {
     }
   }
 
+  setParticleSize(size) {
+    if (this.mesh && this.mesh.material.uniforms) {
+      this.mesh.material.uniforms.uSize.value = size;
+    }
+  }
+
   dispose() {
     if (this.mesh) {
       this.mesh.geometry.dispose();
@@ -3275,17 +3281,42 @@ function LuminousFlow() {
   const [dofFocus, setDofFocus] = useState(8.0);
   const [dofAperture, setDofAperture] = useState(0.025);
 
-  const [expandedSections, setExpandedSections] = useState({
-    global: true,
-    emitters: true,
-    structures: true,
-    ribbons: false,
-    camera: false,
-    audio: false,
-    media: false
+  const [expandedSections, setExpandedSections] = useState(() => {
+    try {
+      const saved = localStorage.getItem('luminousflow_expandedSections');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.warn('Failed to load expanded sections from localStorage:', e);
+    }
+    return {
+      global: true,
+      emitters: true,
+      structures: true,
+      ribbons: false,
+      camera: false,
+      audio: false,
+      media: false
+    };
   });
 
   const [expandedItems, setExpandedItems] = useState({});
+
+  // Scene save/load state
+  const [sceneName, setSceneName] = useState('');
+  const [savedScenes, setSavedScenes] = useState(() => {
+    try {
+      const saved = localStorage.getItem('luminousflow_scenes');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.warn('Failed to load saved scenes from localStorage:', e);
+    }
+    return {};
+  });
+  const [selectedScene, setSelectedScene] = useState('');
 
   // Detect touch device on mount
   useEffect(() => {
@@ -4021,7 +4052,7 @@ function LuminousFlow() {
         // Wave grid amplitude reacts to bass
         if (waveGridRef.current && waveGridEnabled) {
           const waveBoost = audioData.bass * 1.5;
-          waveGridRef.current.setWaveParams(waveAmplitude + waveBoost, 0.5, waveSpeed);
+          waveGridRef.current.setWaveParams(waveAmplitude + waveBoost, waveFrequency, waveSpeed);
         }
         
         // Structure pulse reacts to mid frequencies
@@ -4357,9 +4388,21 @@ function LuminousFlow() {
   
   useEffect(() => {
     if (waveGridRef.current) {
-      waveGridRef.current.setWaveParams(waveAmplitude, 0.5, waveSpeed);
+      waveGridRef.current.setWaveParams(waveAmplitude, waveFrequency, waveSpeed);
     }
-  }, [waveAmplitude, waveSpeed]);
+  }, [waveAmplitude, waveFrequency, waveSpeed]);
+
+  useEffect(() => {
+    if (waveGridRef.current) {
+      waveGridRef.current.setOpacity(waveOpacity);
+    }
+  }, [waveOpacity]);
+
+  useEffect(() => {
+    if (waveGridRef.current) {
+      waveGridRef.current.setParticleSize(waveParticleSize);
+    }
+  }, [waveParticleSize]);
   
   // Update velocity color mode
   useEffect(() => {
@@ -4955,6 +4998,380 @@ function LuminousFlow() {
     }));
   };
 
+  // Save expanded sections to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('luminousflow_expandedSections', JSON.stringify(expandedSections));
+    } catch (e) {
+      console.warn('Failed to save expanded sections to localStorage:', e);
+    }
+  }, [expandedSections]);
+
+  // Reset functions for each section
+  const resetGlobalControls = useCallback(() => {
+    setTimeScale(1.0);
+    setGravity(0.0);
+    setTurbulence(0.8);
+    setBloomIntensity(1.5);
+    setBloomRadius(0.8);
+    setBloomThreshold(0.0);
+    setVignetteIntensity(1.2);
+    setBackgroundStyle('gradient');
+    setColorPalette('Northern Lights');
+    setFilmGrain(true);
+    setFilmGrainIntensity(0.03);
+    setChromaticAberration(true);
+    setChromaticIntensity(0.003);
+    showToast('Global Controls reset to defaults', 'success');
+  }, [showToast]);
+
+  const resetParticleControls = useCallback(() => {
+    setSimulationMode('flow');
+    setParticleSize(2.0);
+    setParticleGlow(1.5);
+    setParticleSpeedLimit(8.0);
+    setParticleDamping(0.98);
+    setCurlNoiseScale(0.5);
+    setCurlNoiseSpeed(0.2);
+    setSpawnRadius(8.0);
+    setMouseFollow(false);
+    setAutoPulse(false);
+    setPulseInterval(3.0);
+    setWaveGridEnabled(false);
+    setWaveAmplitude(1.0);
+    setWaveSpeed(1.0);
+    setWaveFrequency(0.5);
+    setWaveOpacity(0.5);
+    setWaveParticleSize(2.5);
+    showToast('Particle Controls reset to defaults', 'success');
+  }, [showToast]);
+
+  const resetCameraControls = useCallback(() => {
+    setCameraDistance(15);
+    setCameraHeight(8);
+    setCameraAngle(0.8);
+    setCameraRotationSpeed(0.5);
+    setDofEnabled(false);
+    setDofFocus(8.0);
+    setDofAperture(0.025);
+    showToast('Camera Controls reset to defaults', 'success');
+  }, [showToast]);
+
+  const resetAudioControls = useCallback(() => {
+    setAudioReactivity(false);
+    setAudioSensitivity(1.5);
+    showToast('Audio Controls reset to defaults', 'success');
+  }, [showToast]);
+
+  // Scene save/load functions
+  const saveScene = useCallback(() => {
+    if (!sceneName.trim()) {
+      showToast('Please enter a scene name', 'error');
+      return;
+    }
+
+    const sceneData = {
+      // Global controls
+      timeScale,
+      gravity,
+      turbulence,
+      bloomIntensity,
+      bloomRadius,
+      bloomThreshold,
+      vignetteIntensity,
+      backgroundStyle,
+      colorPalette,
+      filmGrain,
+      filmGrainIntensity,
+      chromaticAberration,
+      chromaticIntensity,
+
+      // Particle controls
+      simulationMode,
+      particleSize,
+      particleGlow,
+      particleSpeedLimit,
+      particleDamping,
+      curlNoiseScale,
+      curlNoiseSpeed,
+      spawnRadius,
+      mouseFollow,
+      autoPulse,
+      pulseInterval,
+
+      // Boids parameters
+      boidsSeparation,
+      boidsAlignment,
+      boidsCohesion,
+      boidsNeighborRadius,
+      boidsMaxSpeed,
+
+      // N-Body parameters
+      nbodyGravConstant,
+      nbodySoftening,
+      nbodyDamping,
+
+      // Wave grid
+      waveGridEnabled,
+      waveAmplitude,
+      waveSpeed,
+      waveFrequency,
+      waveOpacity,
+      waveParticleSize,
+
+      // Camera
+      cameraDistance,
+      cameraHeight,
+      cameraAngle,
+      cameraRotationSpeed,
+      dofEnabled,
+      dofFocus,
+      dofAperture,
+
+      // Audio
+      audioReactivity,
+      audioSensitivity,
+
+      // Structures and ribbons
+      structures,
+      ribbons,
+      attractors,
+
+      // Quality
+      qualityLevel,
+      autoQuality,
+
+      // Timestamp
+      savedAt: new Date().toISOString()
+    };
+
+    const updatedScenes = {
+      ...savedScenes,
+      [sceneName.trim()]: sceneData
+    };
+
+    try {
+      localStorage.setItem('luminousflow_scenes', JSON.stringify(updatedScenes));
+      setSavedScenes(updatedScenes);
+      showToast(`Scene "${sceneName.trim()}" saved`, 'success');
+      setSceneName('');
+    } catch (e) {
+      console.error('Failed to save scene:', e);
+      showToast('Failed to save scene', 'error');
+    }
+  }, [sceneName, savedScenes, showToast, timeScale, gravity, turbulence, bloomIntensity, bloomRadius, bloomThreshold, vignetteIntensity, backgroundStyle, colorPalette, filmGrain, filmGrainIntensity, chromaticAberration, chromaticIntensity, simulationMode, particleSize, particleGlow, particleSpeedLimit, particleDamping, curlNoiseScale, curlNoiseSpeed, spawnRadius, mouseFollow, autoPulse, pulseInterval, boidsSeparation, boidsAlignment, boidsCohesion, boidsNeighborRadius, boidsMaxSpeed, nbodyGravConstant, nbodySoftening, nbodyDamping, waveGridEnabled, waveAmplitude, waveSpeed, waveFrequency, waveOpacity, waveParticleSize, cameraDistance, cameraHeight, cameraAngle, cameraRotationSpeed, dofEnabled, dofFocus, dofAperture, audioReactivity, audioSensitivity, structures, ribbons, attractors, qualityLevel, autoQuality]);
+
+  const loadScene = useCallback(() => {
+    if (!selectedScene || !savedScenes[selectedScene]) {
+      showToast('Please select a scene to load', 'error');
+      return;
+    }
+
+    const sceneData = savedScenes[selectedScene];
+
+    try {
+      // Global controls
+      if (sceneData.timeScale !== undefined) setTimeScale(sceneData.timeScale);
+      if (sceneData.gravity !== undefined) setGravity(sceneData.gravity);
+      if (sceneData.turbulence !== undefined) setTurbulence(sceneData.turbulence);
+      if (sceneData.bloomIntensity !== undefined) setBloomIntensity(sceneData.bloomIntensity);
+      if (sceneData.bloomRadius !== undefined) setBloomRadius(sceneData.bloomRadius);
+      if (sceneData.bloomThreshold !== undefined) setBloomThreshold(sceneData.bloomThreshold);
+      if (sceneData.vignetteIntensity !== undefined) setVignetteIntensity(sceneData.vignetteIntensity);
+      if (sceneData.backgroundStyle !== undefined) setBackgroundStyle(sceneData.backgroundStyle);
+      if (sceneData.colorPalette !== undefined) setColorPalette(sceneData.colorPalette);
+      if (sceneData.filmGrain !== undefined) setFilmGrain(sceneData.filmGrain);
+      if (sceneData.filmGrainIntensity !== undefined) setFilmGrainIntensity(sceneData.filmGrainIntensity);
+      if (sceneData.chromaticAberration !== undefined) setChromaticAberration(sceneData.chromaticAberration);
+      if (sceneData.chromaticIntensity !== undefined) setChromaticIntensity(sceneData.chromaticIntensity);
+
+      // Particle controls
+      if (sceneData.simulationMode !== undefined) setSimulationMode(sceneData.simulationMode);
+      if (sceneData.particleSize !== undefined) setParticleSize(sceneData.particleSize);
+      if (sceneData.particleGlow !== undefined) setParticleGlow(sceneData.particleGlow);
+      if (sceneData.particleSpeedLimit !== undefined) setParticleSpeedLimit(sceneData.particleSpeedLimit);
+      if (sceneData.particleDamping !== undefined) setParticleDamping(sceneData.particleDamping);
+      if (sceneData.curlNoiseScale !== undefined) setCurlNoiseScale(sceneData.curlNoiseScale);
+      if (sceneData.curlNoiseSpeed !== undefined) setCurlNoiseSpeed(sceneData.curlNoiseSpeed);
+      if (sceneData.spawnRadius !== undefined) setSpawnRadius(sceneData.spawnRadius);
+      if (sceneData.mouseFollow !== undefined) setMouseFollow(sceneData.mouseFollow);
+      if (sceneData.autoPulse !== undefined) setAutoPulse(sceneData.autoPulse);
+      if (sceneData.pulseInterval !== undefined) setPulseInterval(sceneData.pulseInterval);
+
+      // Boids parameters
+      if (sceneData.boidsSeparation !== undefined) setBoidsSeparation(sceneData.boidsSeparation);
+      if (sceneData.boidsAlignment !== undefined) setBoidsAlignment(sceneData.boidsAlignment);
+      if (sceneData.boidsCohesion !== undefined) setBoidsCohesion(sceneData.boidsCohesion);
+      if (sceneData.boidsNeighborRadius !== undefined) setBoidsNeighborRadius(sceneData.boidsNeighborRadius);
+      if (sceneData.boidsMaxSpeed !== undefined) setBoidsMaxSpeed(sceneData.boidsMaxSpeed);
+
+      // N-Body parameters
+      if (sceneData.nbodyGravConstant !== undefined) setNbodyGravConstant(sceneData.nbodyGravConstant);
+      if (sceneData.nbodySoftening !== undefined) setNbodySoftening(sceneData.nbodySoftening);
+      if (sceneData.nbodyDamping !== undefined) setNbodyDamping(sceneData.nbodyDamping);
+
+      // Wave grid
+      if (sceneData.waveGridEnabled !== undefined) setWaveGridEnabled(sceneData.waveGridEnabled);
+      if (sceneData.waveAmplitude !== undefined) setWaveAmplitude(sceneData.waveAmplitude);
+      if (sceneData.waveSpeed !== undefined) setWaveSpeed(sceneData.waveSpeed);
+      if (sceneData.waveFrequency !== undefined) setWaveFrequency(sceneData.waveFrequency);
+      if (sceneData.waveOpacity !== undefined) setWaveOpacity(sceneData.waveOpacity);
+      if (sceneData.waveParticleSize !== undefined) setWaveParticleSize(sceneData.waveParticleSize);
+
+      // Camera
+      if (sceneData.cameraDistance !== undefined) setCameraDistance(sceneData.cameraDistance);
+      if (sceneData.cameraHeight !== undefined) setCameraHeight(sceneData.cameraHeight);
+      if (sceneData.cameraAngle !== undefined) setCameraAngle(sceneData.cameraAngle);
+      if (sceneData.cameraRotationSpeed !== undefined) setCameraRotationSpeed(sceneData.cameraRotationSpeed);
+      if (sceneData.dofEnabled !== undefined) setDofEnabled(sceneData.dofEnabled);
+      if (sceneData.dofFocus !== undefined) setDofFocus(sceneData.dofFocus);
+      if (sceneData.dofAperture !== undefined) setDofAperture(sceneData.dofAperture);
+
+      // Audio
+      if (sceneData.audioReactivity !== undefined) setAudioReactivity(sceneData.audioReactivity);
+      if (sceneData.audioSensitivity !== undefined) setAudioSensitivity(sceneData.audioSensitivity);
+
+      // Quality
+      if (sceneData.qualityLevel !== undefined) setQualityLevel(sceneData.qualityLevel);
+      if (sceneData.autoQuality !== undefined) setAutoQuality(sceneData.autoQuality);
+
+      showToast(`Loaded scene "${selectedScene}"`, 'success');
+    } catch (e) {
+      console.error('Failed to load scene:', e);
+      showToast('Failed to load scene', 'error');
+    }
+  }, [selectedScene, savedScenes, showToast]);
+
+  const deleteScene = useCallback((name) => {
+    if (!window.confirm(`Delete scene "${name}"?`)) {
+      return;
+    }
+
+    const updatedScenes = { ...savedScenes };
+    delete updatedScenes[name];
+
+    try {
+      localStorage.setItem('luminousflow_scenes', JSON.stringify(updatedScenes));
+      setSavedScenes(updatedScenes);
+      if (selectedScene === name) {
+        setSelectedScene('');
+      }
+      showToast(`Scene "${name}" deleted`, 'success');
+    } catch (e) {
+      console.error('Failed to delete scene:', e);
+      showToast('Failed to delete scene', 'error');
+    }
+  }, [savedScenes, selectedScene, showToast]);
+
+  const exportScene = useCallback(() => {
+    if (!selectedScene || !savedScenes[selectedScene]) {
+      showToast('Please select a scene to export', 'error');
+      return;
+    }
+
+    const sceneData = savedScenes[selectedScene];
+    const jsonStr = JSON.stringify(sceneData, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `luminous-flow-${selectedScene}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`Exported scene "${selectedScene}"`, 'success');
+  }, [selectedScene, savedScenes, showToast]);
+
+  const importScene = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const sceneData = JSON.parse(event.target.result);
+          const name = file.name.replace('.json', '').replace('luminous-flow-', '');
+
+          const updatedScenes = {
+            ...savedScenes,
+            [name]: sceneData
+          };
+
+          localStorage.setItem('luminousflow_scenes', JSON.stringify(updatedScenes));
+          setSavedScenes(updatedScenes);
+          setSelectedScene(name);
+          showToast(`Imported scene "${name}"`, 'success');
+        } catch (err) {
+          console.error('Failed to import scene:', err);
+          showToast('Invalid scene file', 'error');
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  }, [savedScenes, showToast]);
+
+  // URL sharing functions
+  const shareURL = useCallback(() => {
+    const keyParams = {
+      palette: colorPalette,
+      bg: backgroundStyle,
+      mode: simulationMode,
+      bloom: bloomIntensity,
+      particle: particleSize,
+      glow: particleGlow
+    };
+
+    try {
+      const jsonStr = JSON.stringify(keyParams);
+      const base64 = btoa(jsonStr);
+      const url = `${window.location.origin}${window.location.pathname}#${base64}`;
+
+      navigator.clipboard.writeText(url).then(() => {
+        showToast('Share link copied to clipboard!', 'success');
+      }).catch(() => {
+        // Fallback for browsers without clipboard API
+        const textarea = document.createElement('textarea');
+        textarea.value = url;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        showToast('Share link copied to clipboard!', 'success');
+      });
+    } catch (err) {
+      console.error('Failed to create share URL:', err);
+      showToast('Failed to create share link', 'error');
+    }
+  }, [colorPalette, backgroundStyle, simulationMode, bloomIntensity, particleSize, particleGlow, showToast]);
+
+  // Load state from URL hash on mount
+  useEffect(() => {
+    const hash = window.location.hash.slice(1);
+    if (hash) {
+      try {
+        const jsonStr = atob(hash);
+        const params = JSON.parse(jsonStr);
+
+        if (params.palette) setColorPalette(params.palette);
+        if (params.bg) setBackgroundStyle(params.bg);
+        if (params.mode) setSimulationMode(params.mode);
+        if (params.bloom !== undefined) setBloomIntensity(params.bloom);
+        if (params.particle !== undefined) setParticleSize(params.particle);
+        if (params.glow !== undefined) setParticleGlow(params.glow);
+
+        showToast('Loaded shared configuration', 'success');
+      } catch (err) {
+        console.warn('Failed to parse URL hash:', err);
+      }
+    }
+  }, [showToast]);
+
   // Toggle item expansion
   const toggleItem = (id) => {
     setExpandedItems(prev => ({
@@ -5260,13 +5677,177 @@ function LuminousFlow() {
           padding: '15px 20px',
           display: 'flex',
           gap: '10px',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.1)'
+          borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+          flexWrap: 'wrap'
         }}>
-          <button onClick={randomize} style={buttonStyle}>
+          <button
+            onClick={randomize}
+            style={{
+              ...buttonStyle,
+              flex: '1 1 30%'
+            }}
+          >
             Randomize
           </button>
-          <button onClick={clearScene} style={buttonStyle}>
+          <button
+            onClick={clearScene}
+            style={{
+              ...buttonStyle,
+              flex: '1 1 30%'
+            }}
+          >
             Clear Scene
+          </button>
+          <button
+            onClick={shareURL}
+            style={{
+              ...buttonStyle,
+              flex: '1 1 30%',
+              background: 'rgba(100, 200, 255, 0.2)',
+              border: '1px solid rgba(100, 200, 255, 0.4)',
+              color: '#64c8ff'
+            }}
+          >
+            🔗 Share
+          </button>
+        </div>
+
+        {/* Scenes Save/Load Section */}
+        <div style={{
+          padding: '15px 20px',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+          background: 'rgba(100, 200, 255, 0.05)'
+        }}>
+          <div style={{
+            fontSize: '13px',
+            fontWeight: '500',
+            marginBottom: '12px',
+            color: '#64c8ff',
+            letterSpacing: '0.5px'
+          }}>
+            Scenes
+          </div>
+
+          {/* Save Scene */}
+          <div style={{ marginBottom: '12px' }}>
+            <input
+              type="text"
+              value={sceneName}
+              onChange={(e) => setSceneName(e.target.value)}
+              placeholder="Scene name..."
+              style={{
+                width: '100%',
+                padding: '8px',
+                fontSize: '12px',
+                background: 'rgba(255, 255, 255, 0.1)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: '4px',
+                color: 'white',
+                marginBottom: '8px'
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  saveScene();
+                }
+              }}
+            />
+            <button
+              onClick={saveScene}
+              style={{
+                ...buttonStyle,
+                width: '100%',
+                background: 'rgba(0, 255, 100, 0.2)',
+                border: '1px solid rgba(0, 255, 100, 0.4)',
+                color: '#00ff64'
+              }}
+            >
+              💾 Save Current Scene
+            </button>
+          </div>
+
+          {/* Load Scene */}
+          {Object.keys(savedScenes).length > 0 && (
+            <div>
+              <select
+                value={selectedScene}
+                onChange={(e) => setSelectedScene(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  fontSize: '12px',
+                  background: 'rgba(255, 255, 255, 0.1)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: '4px',
+                  color: 'white',
+                  marginBottom: '8px'
+                }}
+              >
+                <option value="">Select a scene...</option>
+                {Object.keys(savedScenes).map(name => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+
+              {selectedScene && (
+                <div style={{
+                  display: 'flex',
+                  gap: '8px',
+                  flexWrap: 'wrap'
+                }}>
+                  <button
+                    onClick={loadScene}
+                    style={{
+                      ...buttonStyle,
+                      flex: '1 1 45%',
+                      background: 'rgba(100, 200, 255, 0.2)',
+                      border: '1px solid rgba(100, 200, 255, 0.4)',
+                      color: '#64c8ff'
+                    }}
+                  >
+                    📂 Load
+                  </button>
+                  <button
+                    onClick={exportScene}
+                    style={{
+                      ...buttonStyle,
+                      flex: '1 1 45%',
+                      background: 'rgba(255, 170, 0, 0.2)',
+                      border: '1px solid rgba(255, 170, 0, 0.4)',
+                      color: '#ffaa00'
+                    }}
+                  >
+                    📤 Export
+                  </button>
+                  <button
+                    onClick={() => deleteScene(selectedScene)}
+                    style={{
+                      ...buttonStyle,
+                      width: '100%',
+                      background: 'rgba(255, 64, 64, 0.2)',
+                      border: '1px solid rgba(255, 64, 64, 0.4)',
+                      color: '#ff4040'
+                    }}
+                  >
+                    🗑️ Delete
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Import Scene */}
+          <button
+            onClick={importScene}
+            style={{
+              ...buttonStyle,
+              width: '100%',
+              marginTop: '12px',
+              background: 'rgba(170, 100, 255, 0.2)',
+              border: '1px solid rgba(170, 100, 255, 0.4)',
+              color: '#aa64ff'
+            }}
+          >
+            📥 Import Scene
           </button>
         </div>
 
@@ -5275,6 +5856,7 @@ function LuminousFlow() {
           title="Global Controls"
           expanded={expandedSections.global}
           onToggle={() => toggleSection('global')}
+          onReset={resetGlobalControls}
         >
           <Slider
             label="Time Scale"
@@ -5300,6 +5882,24 @@ function LuminousFlow() {
             onChange={setBloomIntensity}
             min={0} max={3} step={0.1}
           />
+          <Slider
+            label="Bloom Radius"
+            value={bloomRadius}
+            onChange={setBloomRadius}
+            min={0.1} max={2.0} step={0.1}
+          />
+          <Slider
+            label="Bloom Threshold"
+            value={bloomThreshold}
+            onChange={setBloomThreshold}
+            min={0.0} max={1.0} step={0.05}
+          />
+          <Slider
+            label="Vignette Intensity"
+            value={vignetteIntensity}
+            onChange={setVignetteIntensity}
+            min={0.0} max={3.0} step={0.1}
+          />
           <Select
             label="Background Style"
             value={backgroundStyle}
@@ -5317,6 +5917,14 @@ function LuminousFlow() {
             checked={filmGrain}
             onChange={setFilmGrain}
           />
+          {filmGrain && (
+            <Slider
+              label="Film Grain Intensity"
+              value={filmGrainIntensity}
+              onChange={setFilmGrainIntensity}
+              min={0.0} max={0.1} step={0.01}
+            />
+          )}
           <Checkbox
             label="Chromatic Aberration"
             checked={chromaticAberration}
@@ -5337,6 +5945,7 @@ function LuminousFlow() {
           title="GPU Particles"
           expanded={expandedSections.emitters}
           onToggle={() => toggleSection('emitters')}
+          onReset={resetParticleControls}
         >
           <div style={{
             padding: '12px',
@@ -5470,6 +6079,74 @@ function LuminousFlow() {
             </div>
           </div>
 
+          {/* Particle Parameters */}
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            background: 'rgba(0, 255, 255, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(0, 255, 255, 0.3)'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#00ffff'
+            }}>
+              Particle Parameters
+            </div>
+            <Slider
+              label="Particle Size"
+              value={particleSize}
+              onChange={setParticleSize}
+              min={0.5} max={5.0} step={0.1}
+            />
+            <Slider
+              label="Particle Glow"
+              value={particleGlow}
+              onChange={setParticleGlow}
+              min={0.0} max={3.0} step={0.1}
+            />
+            <Slider
+              label="Speed Limit"
+              value={particleSpeedLimit}
+              onChange={setParticleSpeedLimit}
+              min={1.0} max={20.0} step={0.5}
+            />
+            <Slider
+              label="Damping"
+              value={particleDamping}
+              onChange={setParticleDamping}
+              min={0.90} max={0.999} step={0.001}
+            />
+            <Slider
+              label="Curl Noise Scale"
+              value={curlNoiseScale}
+              onChange={setCurlNoiseScale}
+              min={0.1} max={2.0} step={0.1}
+            />
+            <Slider
+              label="Curl Noise Speed"
+              value={curlNoiseSpeed}
+              onChange={setCurlNoiseSpeed}
+              min={0.05} max={1.0} step={0.05}
+            />
+            <Slider
+              label="Spawn Radius"
+              value={spawnRadius}
+              onChange={setSpawnRadius}
+              min={1.0} max={20.0} step={0.5}
+            />
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              Controls for particle appearance and physics behavior
+            </div>
+          </div>
+
           {/* Interactivity Controls */}
           <div style={{
             marginTop: '12px',
@@ -5548,6 +6225,24 @@ function LuminousFlow() {
                   value={waveSpeed}
                   onChange={setWaveSpeed}
                   min={0.2} max={3.0} step={0.1}
+                />
+                <Slider
+                  label="Wave Frequency"
+                  value={waveFrequency}
+                  onChange={setWaveFrequency}
+                  min={0.1} max={2.0} step={0.1}
+                />
+                <Slider
+                  label="Wave Opacity"
+                  value={waveOpacity}
+                  onChange={setWaveOpacity}
+                  min={0.0} max={1.0} step={0.05}
+                />
+                <Slider
+                  label="Wave Particle Size"
+                  value={waveParticleSize}
+                  onChange={setWaveParticleSize}
+                  min={0.5} max={5.0} step={0.1}
                 />
               </>
             )}
@@ -5947,6 +6642,7 @@ function LuminousFlow() {
           title="Camera"
           expanded={expandedSections.camera}
           onToggle={() => toggleSection('camera')}
+          onReset={resetCameraControls}
         >
           {/* Camera Presets */}
           <div style={{
@@ -6080,6 +6776,7 @@ function LuminousFlow() {
           title="Audio Reactivity"
           expanded={expandedSections.audio}
           onToggle={() => toggleSection('audio')}
+          onReset={resetAudioControls}
         >
           <div style={{
             padding: '12px',
@@ -6408,22 +7105,64 @@ const buttonStyle = {
   flex: 1
 };
 
-function Section({ title, expanded, onToggle, children }) {
+function Section({ title, expanded, onToggle, onReset, children }) {
   return (
     <div style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)' }}>
       <div
-        onClick={onToggle}
         style={{
           padding: '12px 20px',
           cursor: 'pointer',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          background: 'rgba(255, 255, 255, 0.03)'
+          background: 'rgba(255, 255, 255, 0.03)',
+          gap: '10px'
         }}
       >
-        <span style={{ fontWeight: '500', letterSpacing: '0.5px' }}>{title}</span>
-        <span style={{ opacity: 0.5 }}>{expanded ? '−' : '+'}</span>
+        <span
+          onClick={onToggle}
+          style={{
+            fontWeight: '500',
+            letterSpacing: '0.5px',
+            flex: 1
+          }}
+        >
+          {title}
+        </span>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {onReset && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onReset();
+              }}
+              style={{
+                padding: '4px 8px',
+                fontSize: '10px',
+                background: 'rgba(255, 170, 0, 0.2)',
+                border: '1px solid rgba(255, 170, 0, 0.4)',
+                borderRadius: '3px',
+                color: '#ffaa00',
+                cursor: 'pointer',
+                fontWeight: '500'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = 'rgba(255, 170, 0, 0.3)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = 'rgba(255, 170, 0, 0.2)';
+              }}
+            >
+              Reset
+            </button>
+          )}
+          <span
+            onClick={onToggle}
+            style={{ opacity: 0.5 }}
+          >
+            {expanded ? '−' : '+'}
+          </span>
+        </div>
       </div>
       {expanded && (
         <div style={{ padding: '10px 20px' }}>

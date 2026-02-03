@@ -4314,114 +4314,7 @@ function LuminousFlow() {
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (event) => {
-      // Don't trigger shortcuts if user is typing in an input
-      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA' || event.target.tagName === 'SELECT') {
-        return;
-      }
-
-      // Build shortcut key with modifiers
-      let shortcutKey = event.key.toLowerCase();
-      if (event.shiftKey && event.key !== 'Shift') {
-        shortcutKey = `Shift+${event.key}`;
-      }
-
-      const shortcut = KEYBOARD_SHORTCUTS[shortcutKey] || KEYBOARD_SHORTCUTS[event.key];
-
-      if (!shortcut) return;
-      
-      event.preventDefault();
-      
-      const paletteNames = Object.keys(COLOR_PALETTES);
-      
-      switch (shortcut.action) {
-        case 'triggerPulse':
-          triggerManualPulse();
-          break;
-        case 'randomize':
-          randomize();
-          showToast('Scene randomized', 'success');
-          break;
-        case 'clearScene':
-          clearScene();
-          showToast('Scene cleared', 'info');
-          break;
-        case 'toggleUI':
-          setUiVisible(prev => !prev);
-          showToast(uiVisible ? 'UI hidden' : 'UI visible', 'info');
-          break;
-        case 'toggleFullscreen':
-          toggleFullscreen();
-          break;
-        case 'togglePause':
-          togglePause();
-          break;
-        case 'toggleMouseFollow':
-          setMouseFollow(prev => {
-            const newVal = !prev;
-            showToast(newVal ? 'Mouse follow ON' : 'Mouse follow OFF', 'info');
-            return newVal;
-          });
-          break;
-        case 'toggleWaveGrid':
-          setWaveGridEnabled(prev => {
-            const newVal = !prev;
-            showToast(newVal ? 'Wave grid ON' : 'Wave grid OFF', 'info');
-            return newVal;
-          });
-          break;
-        case 'palette1':
-        case 'palette2':
-        case 'palette3':
-        case 'palette4':
-        case 'palette5':
-        case 'palette6':
-          const paletteIndex = parseInt(shortcut.action.slice(-1)) - 1;
-          if (paletteNames[paletteIndex]) {
-            setColorPalette(paletteNames[paletteIndex]);
-            showToast(`Palette: ${paletteNames[paletteIndex]}`, 'success');
-          }
-          break;
-        case 'qualityUp':
-          adjustQuality(1);
-          break;
-        case 'qualityDown':
-          adjustQuality(-1);
-          break;
-        case 'resetCamera':
-          resetCamera();
-          showToast('Camera reset', 'info');
-          break;
-        case 'cameraTopDown':
-          flyToPreset('topDown');
-          break;
-        case 'cameraSide':
-          flyToPreset('side');
-          break;
-        case 'cameraCloseUp':
-          flyToPreset('closeUp');
-          break;
-        case 'cameraWide':
-          flyToPreset('wide');
-          break;
-        case 'cameraCinematic':
-          flyToPreset('cinematic');
-          break;
-        case 'cameraLow':
-          flyToPreset('low');
-          break;
-        case 'showHelp':
-          setShowHelp(prev => !prev);
-          break;
-        case 'togglePerfOverlay':
-          setShowPerfOverlay(prev => !prev);
-          break;
-        default:
-          break;
-      }
-    };
+  
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -5515,7 +5408,114 @@ function LuminousFlow() {
       [id]: !prev[id]
     }));
   };
+// Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      // Don't trigger shortcuts if user is typing in an input
+      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA' || event.target.tagName === 'SELECT') {
+        return;
+      }
 
+      // Build shortcut key with modifiers
+      let shortcutKey = event.key.toLowerCase();
+      if (event.shiftKey && event.key !== 'Shift') {
+        shortcutKey = `Shift+${event.key}`;
+      }
+
+      const shortcut = KEYBOARD_SHORTCUTS[shortcutKey] || KEYBOARD_SHORTCUTS[event.key];
+
+      if (!shortcut) return;
+      
+      event.preventDefault();
+      
+      const paletteNames = Object.keys(COLOR_PALETTES);
+      
+      switch (shortcut.action) {
+        case 'triggerPulse':
+          triggerManualPulse();
+          break;
+        case 'randomize':
+          randomize();
+          showToast('Scene randomized', 'success');
+          break;
+        case 'clearScene':
+          clearScene();
+          showToast('Scene cleared', 'info');
+          break;
+        case 'toggleUI':
+          setUiVisible(prev => !prev);
+          showToast(uiVisible ? 'UI hidden' : 'UI visible', 'info');
+          break;
+        case 'toggleFullscreen':
+          toggleFullscreen();
+          break;
+        case 'togglePause':
+          togglePause();
+          break;
+        case 'toggleMouseFollow':
+          setMouseFollow(prev => {
+            const newVal = !prev;
+            showToast(newVal ? 'Mouse follow ON' : 'Mouse follow OFF', 'info');
+            return newVal;
+          });
+          break;
+        case 'toggleWaveGrid':
+          setWaveGridEnabled(prev => {
+            const newVal = !prev;
+            showToast(newVal ? 'Wave grid ON' : 'Wave grid OFF', 'info');
+            return newVal;
+          });
+          break;
+        case 'palette1':
+        case 'palette2':
+        case 'palette3':
+        case 'palette4':
+        case 'palette5':
+        case 'palette6':
+          const paletteIndex = parseInt(shortcut.action.slice(-1)) - 1;
+          if (paletteNames[paletteIndex]) {
+            setColorPalette(paletteNames[paletteIndex]);
+            showToast(`Palette: ${paletteNames[paletteIndex]}`, 'success');
+          }
+          break;
+        case 'qualityUp':
+          adjustQuality(1);
+          break;
+        case 'qualityDown':
+          adjustQuality(-1);
+          break;
+        case 'resetCamera':
+          resetCamera();
+          showToast('Camera reset', 'info');
+          break;
+        case 'cameraTopDown':
+          flyToPreset('topDown');
+          break;
+        case 'cameraSide':
+          flyToPreset('side');
+          break;
+        case 'cameraCloseUp':
+          flyToPreset('closeUp');
+          break;
+        case 'cameraWide':
+          flyToPreset('wide');
+          break;
+        case 'cameraCinematic':
+          flyToPreset('cinematic');
+          break;
+        case 'cameraLow':
+          flyToPreset('low');
+          break;
+        case 'showHelp':
+          setShowHelp(prev => !prev);
+          break;
+        case 'togglePerfOverlay':
+          setShowPerfOverlay(prev => !prev);
+          break;
+        default:
+          break;
+      }
+    };
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       {/* Three.js Canvas */}

@@ -4464,6 +4464,17 @@ function LuminousFlow() {
     })));
   }, [colorPalette]);
 
+  // Show toast notification (must be defined early as many hooks depend on it)
+  const showToast = useCallback((message, type = 'info') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
+
+    // Auto-remove after 3 seconds
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3000);
+  }, []);
+
   // Create default scene
   const createDefaultScene = useCallback(() => {
     const palette = COLOR_PALETTES[colorPalette];
@@ -4732,17 +4743,6 @@ function LuminousFlow() {
       showToast(`Camera: ${presetName}`, 'info');
     }
   }, [flyTo, showToast]);
-
-  // Show toast notification
-  const showToast = useCallback((message, type = 'info') => {
-    const id = Date.now();
-    setToasts(prev => [...prev, { id, message, type }]);
-    
-    // Auto-remove after 3 seconds
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-    }, 3000);
-  }, []);
 
   // Trigger manual pulse
   const triggerManualPulse = useCallback(() => {

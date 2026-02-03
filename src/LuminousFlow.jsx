@@ -4314,12 +4314,6 @@ function LuminousFlow() {
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
 
-  
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [uiVisible, randomize, clearScene, resetCamera, flyToPreset, colorPalette, simulationMode, showToast]);
-
   // Sync paused state to ref
   useEffect(() => {
     pausedRef.current = paused;
@@ -5516,6 +5510,9 @@ function LuminousFlow() {
           break;
       }
     };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [uiVisible, randomize, clearScene, resetCamera, flyToPreset, colorPalette, simulationMode, showToast]);
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       {/* Three.js Canvas */}

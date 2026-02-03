@@ -1,0 +1,7637 @@
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+import ReactDOM from 'react-dom/client';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js';
+import { AfterimagePass } from 'three/examples/jsm/postprocessing/AfterimagePass.js';
+import { GPUComputationRenderer } from 'three/examples/jsm/misc/GPUComputationRenderer.js';
+import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
+
+// ============================================================================
+// COLOR PALETTES
+// ============================================================================
+const COLOR_PALETTES = {
+  'Northern Lights': {
+    primary: '#00ffaa',
+    secondary: '#00aaff',
+    accent: '#aa55ff',
+    highlight: '#ffffff',
+    background: ['#0a0a1a', '#051515', '#0a1a1a']
+  },
+  'Deep Ocean': {
+    primary: '#0055ff',
+    secondary: '#00ffff',
+    accent: '#8800ff',
+    highlight: '#ffffff',
+    background: ['#000515', '#001025', '#000520']
+  },
+  'Solar Corona': {
+    primary: '#ff8800',
+    secondary: '#ffff00',
+    accent: '#ff2200',
+    highlight: '#ffffff',
+    background: ['#1a0a00', '#150500', '#1a0500']
+  },
+  'Synthwave': {
+    primary: '#ff00aa',
+    secondary: '#00ffff',
+    accent: '#aa00ff',
+    highlight: '#ffaaff',
+    background: ['#0a0015', '#150020', '#0a0520']
+  },
+  'Monochrome Zen': {
+    primary: '#ffffff',
+    secondary: '#aabbcc',
+    accent: '#8899aa',
+    highlight: '#ffffff',
+    background: ['#0a0a0f', '#0f0f15', '#0a0a12']
+  },
+  'Ember & Ash': {
+    primary: '#ff3300',
+    secondary: '#ff8800',
+    accent: '#ffaa00',
+    highlight: '#ffffff',
+    background: ['#0a0505', '#150a05', '#0a0805']
+  }
+};
+
+// ============================================================================
+// SCENE PRESETS - Curated configurations
+// ============================================================================
+const SCENE_PRESETS = {
+  'Cosmic Dance': {
+    description: 'Ethereal deep ocean with swirling rings',
+    palette: 'Deep Ocean',
+    background: 'nebula',
+    timeScale: 0.8,
+    bloom: 1.8,
+    structures: [
+      { type: 'rings', scale: 1.2, position: [0, 0, 0], rotationSpeed: 0.3 },
+      { type: 'icosahedron', scale: 0.4, position: [0, 0, 0], rotationSpeed: 0.2 }
+    ],
+    ribbons: [
+      { type: 'toroidal', thickness: 0.06 }
+    ],
+    waveGrid: true,
+    waveAmplitude: 1.5
+  },
+  'Solar Flare': {
+    description: 'Intense fiery energy burst',
+    palette: 'Solar Corona',
+    background: 'gradient',
+    timeScale: 1.3,
+    bloom: 2.2,
+    structures: [
+      { type: 'torus', scale: 0.8, position: [0, 0, 0], rotationSpeed: 0.5 }
+    ],
+    ribbons: [
+      { type: 'spiral', thickness: 0.1 },
+      { type: 'helix', thickness: 0.05 }
+    ],
+    waveGrid: true,
+    waveAmplitude: 2.0
+  },
+  'Digital Dreams': {
+    description: 'Synthwave aesthetic with geometric precision',
+    palette: 'Synthwave',
+    background: 'nebula',
+    timeScale: 1.0,
+    bloom: 2.0,
+    structures: [
+      { type: 'helix', scale: 1.5, position: [0, 0, 0], rotationSpeed: 0.15 },
+      { type: 'mobius', scale: 0.6, position: [2, 0, 0], rotationSpeed: 0.4 }
+    ],
+    ribbons: [
+      { type: 'lissajous', thickness: 0.08 }
+    ],
+    waveGrid: true,
+    waveAmplitude: 0.8
+  },
+  'Zen Garden': {
+    description: 'Minimal and meditative monochrome',
+    palette: 'Monochrome Zen',
+    background: 'gradient',
+    timeScale: 0.5,
+    bloom: 1.2,
+    structures: [
+      { type: 'icosahedron', scale: 1.0, position: [0, 0, 0], rotationSpeed: 0.1 }
+    ],
+    ribbons: [],
+    waveGrid: true,
+    waveAmplitude: 0.5
+  },
+  'Aurora Borealis': {
+    description: 'Northern lights dancing in the sky',
+    palette: 'Northern Lights',
+    background: 'nebula',
+    timeScale: 0.7,
+    bloom: 1.5,
+    structures: [
+      { type: 'rings', scale: 1.8, position: [0, 0, 0], rotationSpeed: 0.08 }
+    ],
+    ribbons: [
+      { type: 'helix', thickness: 0.12 },
+      { type: 'toroidal', thickness: 0.04 }
+    ],
+    waveGrid: true,
+    waveAmplitude: 1.2
+  },
+  'Ember Storm': {
+    description: 'Fiery particles in chaotic motion',
+    palette: 'Ember & Ash',
+    background: 'gradient',
+    timeScale: 1.5,
+    bloom: 1.8,
+    structures: [
+      { type: 'torus', scale: 0.6, position: [0, 1, 0], rotationSpeed: 0.8 },
+      { type: 'torus', scale: 0.4, position: [0, -1, 0], rotationSpeed: -0.6 }
+    ],
+    ribbons: [
+      { type: 'spiral', thickness: 0.15 }
+    ],
+    waveGrid: false,
+    waveAmplitude: 1.0
+  },
+  'Murmuration': {
+    description: 'Flocking behavior - birds in synchronized flight',
+    palette: 'Northern Lights',
+    background: 'gradient',
+    timeScale: 1.0,
+    bloom: 1.4,
+    simulationMode: 'boids',
+    boids: {
+      separation: 2.0,
+      alignment: 1.5,
+      cohesion: 1.2,
+      neighborRadius: 2.5,
+      maxSpeed: 5.0
+    },
+    structures: [],
+    ribbons: [],
+    waveGrid: false,
+    waveAmplitude: 1.0
+  },
+  'Swarm': {
+    description: 'Dense flocking with high cohesion',
+    palette: 'Synthwave',
+    background: 'nebula',
+    timeScale: 0.8,
+    bloom: 2.0,
+    simulationMode: 'boids',
+    boids: {
+      separation: 0.8,
+      alignment: 0.8,
+      cohesion: 3.0,
+      neighborRadius: 3.0,
+      maxSpeed: 4.0
+    },
+    structures: [],
+    ribbons: [],
+    waveGrid: false,
+    waveAmplitude: 0.5
+  },
+  'Solar System': {
+    description: 'Gravitational n-body simulation',
+    palette: 'Solar Corona',
+    background: 'gradient',
+    timeScale: 0.6,
+    bloom: 2.2,
+    simulationMode: 'nbody',
+    nbody: {
+      gravConstant: 0.8,
+      softening: 0.5,
+      damping: 0.998
+    },
+    structures: [
+      { type: 'icosahedron', scale: 1.5, position: [0, 0, 0], rotationSpeed: 0.1, mass: 5.0 },
+      { type: 'torus', scale: 0.8, position: [4, 0, 0], rotationSpeed: 0.3, mass: 2.0 },
+      { type: 'rings', scale: 0.6, position: [-3, 2, 0], rotationSpeed: 0.2, mass: 1.5 }
+    ],
+    ribbons: [],
+    waveGrid: false,
+    waveAmplitude: 0.8
+  },
+  'Galaxy': {
+    description: 'Massive central body with orbiting particles',
+    palette: 'Deep Ocean',
+    background: 'nebula',
+    timeScale: 0.5,
+    bloom: 1.8,
+    simulationMode: 'nbody',
+    nbody: {
+      gravConstant: 1.2,
+      softening: 0.8,
+      damping: 0.999
+    },
+    structures: [
+      { type: 'icosahedron', scale: 2.0, position: [0, 0, 0], rotationSpeed: 0.05, mass: 10.0 }
+    ],
+    ribbons: [],
+    waveGrid: false,
+    waveAmplitude: 1.0
+  }
+};
+
+// ============================================================================
+// CAMERA PRESETS
+// ============================================================================
+const CAMERA_PRESETS = {
+  default: { position: [0, 2, 8], target: [0, 0, 0], fov: 75 },
+  topDown: { position: [0, 15, 0.1], target: [0, 0, 0], fov: 60 },
+  side: { position: [12, 0, 0], target: [0, 0, 0], fov: 70 },
+  closeUp: { position: [0, 0.5, 3], target: [0, 0, 0], fov: 50 },
+  wide: { position: [0, 5, 18], target: [0, 0, 0], fov: 90 },
+  cinematic: { position: [6, 4, 6], target: [0, -1, 0], fov: 65 },
+  low: { position: [4, -2, 4], target: [0, 1, 0], fov: 80 }
+};
+
+// ============================================================================
+// EASING FUNCTIONS
+// ============================================================================
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+// Pre-allocated Color objects for lerpColor to avoid allocations
+const _lerpC1 = new THREE.Color();
+const _lerpC2 = new THREE.Color();
+
+function lerpColor(color1, color2, t) {
+  _lerpC1.set(color1);
+  _lerpC2.set(color2);
+  return '#' + _lerpC1.lerp(_lerpC2, t).getHexString();
+}
+
+// ============================================================================
+// GRAVITY DIRECTION VECTORS
+// ============================================================================
+const GRAVITY_VECTORS = {
+  down: new THREE.Vector3(0, -1, 0),
+  up: new THREE.Vector3(0, 1, 0),
+  left: new THREE.Vector3(-1, 0, 0),
+  right: new THREE.Vector3(1, 0, 0),
+  forward: new THREE.Vector3(0, 0, -1),
+  backward: new THREE.Vector3(0, 0, 1)
+};
+const DEFAULT_GRAVITY = new THREE.Vector3(0, -1, 0);
+
+// ============================================================================
+// KEYBOARD SHORTCUTS
+// ============================================================================
+const KEYBOARD_SHORTCUTS = {
+  ' ': { action: 'triggerPulse', description: 'Trigger shockwave pulse' },
+  'r': { action: 'randomize', description: 'Randomize scene' },
+  'c': { action: 'clearScene', description: 'Clear all objects' },
+  'h': { action: 'toggleUI', description: 'Hide/show control panel' },
+  'f': { action: 'toggleFullscreen', description: 'Toggle fullscreen' },
+  'p': { action: 'togglePause', description: 'Pause/resume animation' },
+  'm': { action: 'toggleMouseFollow', description: 'Toggle mouse attraction' },
+  'g': { action: 'toggleWaveGrid', description: 'Toggle wave grid' },
+  '1': { action: 'palette1', description: 'Northern Lights palette' },
+  '2': { action: 'palette2', description: 'Deep Ocean palette' },
+  '3': { action: 'palette3', description: 'Solar Corona palette' },
+  '4': { action: 'palette4', description: 'Synthwave palette' },
+  '5': { action: 'palette5', description: 'Monochrome Zen palette' },
+  '6': { action: 'palette6', description: 'Ember & Ash palette' },
+  '=': { action: 'qualityUp', description: 'Increase quality' },
+  '-': { action: 'qualityDown', description: 'Decrease quality' },
+  'Escape': { action: 'resetCamera', description: 'Reset camera position' },
+  '?': { action: 'showHelp', description: 'Show keyboard shortcuts' },
+  'i': { action: 'togglePerfOverlay', description: 'Toggle performance overlay' },
+  'Shift+1': { action: 'cameraTopDown', description: 'Camera: Top-down view' },
+  'Shift+2': { action: 'cameraSide', description: 'Camera: Side view' },
+  'Shift+3': { action: 'cameraCloseUp', description: 'Camera: Close-up view' },
+  'Shift+4': { action: 'cameraWide', description: 'Camera: Wide view' },
+  'Shift+5': { action: 'cameraCinematic', description: 'Camera: Cinematic view' },
+  'Shift+6': { action: 'cameraLow', description: 'Camera: Low angle view' }
+};
+
+// ============================================================================
+// CUSTOM SHADERS
+// ============================================================================
+
+// Vignette shader
+const VignetteShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    offset: { value: 1.0 },
+    darkness: { value: 1.2 }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float offset;
+    uniform float darkness;
+    varying vec2 vUv;
+    void main() {
+      vec4 texel = texture2D(tDiffuse, vUv);
+      vec2 uv = (vUv - vec2(0.5)) * vec2(offset);
+      float vignette = 1.0 - dot(uv, uv);
+      vignette = clamp(pow(vignette, darkness), 0.0, 1.0);
+      gl_FragColor = vec4(texel.rgb * vignette, texel.a);
+    }
+  `
+};
+
+// Film grain shader
+const FilmGrainShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    time: { value: 0.0 },
+    intensity: { value: 0.05 }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float time;
+    uniform float intensity;
+    varying vec2 vUv;
+
+    float random(vec2 p) {
+      return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+    }
+
+    void main() {
+      vec4 texel = texture2D(tDiffuse, vUv);
+      float noise = random(vUv + time) * 2.0 - 1.0;
+      vec3 result = texel.rgb + texel.rgb * noise * intensity;
+      gl_FragColor = vec4(result, texel.a);
+    }
+  `
+};
+
+// Chromatic aberration shader
+const ChromaticAberrationShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uIntensity: { value: 0.003 },
+    uTime: { value: 0 }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float uIntensity;
+    uniform float uTime;
+    varying vec2 vUv;
+    
+    void main() {
+      // Radial chromatic aberration - stronger at edges
+      vec2 center = vUv - 0.5;
+      float dist = length(center);
+      vec2 offset = center * uIntensity * dist;
+      
+      // Slight animation for subtle movement
+      float animOffset = sin(uTime * 0.5) * 0.0005;
+      offset += animOffset;
+      
+      // Sample RGB channels with offset
+      float r = texture2D(tDiffuse, vUv + offset).r;
+      float g = texture2D(tDiffuse, vUv).g;
+      float b = texture2D(tDiffuse, vUv - offset).b;
+      
+      gl_FragColor = vec4(r, g, b, 1.0);
+    }
+  `
+};
+
+// Bloom presets per palette for optimized visual impact
+const BLOOM_PRESETS = {
+  'Northern Lights': { strength: 1.5, radius: 0.6, threshold: 0.3 },
+  'Deep Ocean': { strength: 1.8, radius: 0.5, threshold: 0.2 },
+  'Solar Corona': { strength: 2.2, radius: 0.7, threshold: 0.1 },
+  'Synthwave': { strength: 2.0, radius: 0.5, threshold: 0.2 },
+  'Monochrome Zen': { strength: 1.2, radius: 0.4, threshold: 0.4 },
+  'Ember & Ash': { strength: 1.8, radius: 0.6, threshold: 0.2 }
+};
+
+// Particle glow vertex shader
+const particleVertexShader = `
+  attribute float size;
+  attribute vec3 customColor;
+  attribute float alpha;
+  attribute float lifetime;
+
+  varying vec3 vColor;
+  varying float vAlpha;
+  varying float vLifetime;
+
+  void main() {
+    vColor = customColor;
+    vAlpha = alpha;
+    vLifetime = lifetime;
+
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = size * (300.0 / -mvPosition.z);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+// Particle glow fragment shader - volumetric orbs
+const particleFragmentShader = `
+  varying vec3 vColor;
+  varying float vAlpha;
+  varying float vLifetime;
+
+  void main() {
+    vec2 center = gl_PointCoord - vec2(0.5);
+    float dist = length(center);
+
+    // Soft volumetric falloff with bright core
+    float core = exp(-dist * 8.0) * 1.5;
+    float glow = exp(-dist * 3.0);
+    float outer = exp(-dist * 1.5) * 0.5;
+
+    float intensity = core + glow * 0.6 + outer * 0.3;
+    intensity *= smoothstep(0.5, 0.2, dist);
+
+    // Pulse based on lifetime
+    float pulse = 1.0 + sin(vLifetime * 10.0) * 0.1;
+
+    vec3 finalColor = vColor * intensity * pulse;
+    float finalAlpha = vAlpha * intensity;
+
+    if (finalAlpha < 0.01) discard;
+
+    gl_FragColor = vec4(finalColor, finalAlpha);
+  }
+`;
+
+// Edge glow shader for structures
+const edgeGlowVertexShader = `
+  varying vec3 vNormal;
+  varying vec3 vViewPosition;
+
+  void main() {
+    vNormal = normalize(normalMatrix * normal);
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    vViewPosition = -mvPosition.xyz;
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const edgeGlowFragmentShader = `
+  uniform vec3 glowColor;
+  uniform float glowIntensity;
+  uniform float time;
+
+  varying vec3 vNormal;
+  varying vec3 vViewPosition;
+
+  void main() {
+    vec3 viewDir = normalize(vViewPosition);
+    float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 3.0);
+
+    // Animated energy pulse
+    float pulse = sin(time * 2.0) * 0.3 + 0.7;
+
+    vec3 color = glowColor * fresnel * glowIntensity * pulse;
+    float alpha = fresnel * 0.8;
+
+    gl_FragColor = vec4(color, alpha);
+  }
+`;
+
+// ============================================================================
+// PARTICLE SYSTEM CLASS (OLD - DEPRECATED - GPU VERSION BELOW)
+// ============================================================================
+/*
+class ParticleEmitter {
+  constructor(scene, config) {
+    this.scene = scene;
+    this.config = {
+      type: 'fountain',
+      position: new THREE.Vector3(0, 0, 0),
+      emissionRate: 50,
+      particleLifetime: 3,
+      particleSizeMin: 0.1,
+      particleSizeMax: 0.3,
+      velocityMin: 1,
+      velocityMax: 3,
+      colors: ['#00ffaa', '#00aaff', '#ffffff'],
+      trailLength: 5,
+      gravity: -2,
+      turbulence: 0.5,
+      ...config
+    };
+
+    this.maxParticles = 2000;
+    this.particles = [];
+    this.particlePool = [];
+
+    this.initGeometry();
+  }
+
+  initGeometry() {
+    const geometry = new THREE.BufferGeometry();
+
+    this.positions = new Float32Array(this.maxParticles * 3);
+    this.colors = new Float32Array(this.maxParticles * 3);
+    this.sizes = new Float32Array(this.maxParticles);
+    this.alphas = new Float32Array(this.maxParticles);
+    this.lifetimes = new Float32Array(this.maxParticles);
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
+    geometry.setAttribute('customColor', new THREE.BufferAttribute(this.colors, 3));
+    geometry.setAttribute('size', new THREE.BufferAttribute(this.sizes, 1));
+    geometry.setAttribute('alpha', new THREE.BufferAttribute(this.alphas, 1));
+    geometry.setAttribute('lifetime', new THREE.BufferAttribute(this.lifetimes, 1));
+
+    const material = new THREE.ShaderMaterial({
+      uniforms: {},
+      vertexShader: particleVertexShader,
+      fragmentShader: particleFragmentShader,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      transparent: true
+    });
+
+    this.mesh = new THREE.Points(geometry, material);
+    this.scene.add(this.mesh);
+
+    // Trail geometry
+    this.trailPositions = [];
+    this.trailGeometry = new THREE.BufferGeometry();
+    this.trailMaterial = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.3,
+      blending: THREE.AdditiveBlending
+    });
+  }
+
+  createParticle() {
+    const particle = this.particlePool.pop() || {};
+
+    particle.position = this.config.position.clone();
+    particle.age = 0;
+    particle.lifetime = this.config.particleLifetime * (0.8 + Math.random() * 0.4);
+    particle.size = this.config.particleSizeMin +
+      Math.random() * (this.config.particleSizeMax - this.config.particleSizeMin);
+
+    // Color from gradient
+    const colorIndex = Math.floor(Math.random() * this.config.colors.length);
+    particle.color = new THREE.Color(this.config.colors[colorIndex]);
+
+    // Velocity based on emitter type
+    particle.velocity = this.getInitialVelocity();
+
+    // Trail history
+    particle.trail = [];
+
+    return particle;
+  }
+
+  getInitialVelocity() {
+    const speed = this.config.velocityMin +
+      Math.random() * (this.config.velocityMax - this.config.velocityMin);
+
+    switch (this.config.type) {
+      case 'fountain':
+        return new THREE.Vector3(
+          (Math.random() - 0.5) * 0.5,
+          speed,
+          (Math.random() - 0.5) * 0.5
+        );
+
+      case 'vortex':
+        const angle = Math.random() * Math.PI * 2;
+        const radius = 0.5 + Math.random() * 0.5;
+        return new THREE.Vector3(
+          Math.cos(angle) * radius,
+          (Math.random() - 0.5) * 0.5,
+          Math.sin(angle) * radius
+        );
+
+      case 'orbital':
+        const orbAngle = Math.random() * Math.PI * 2;
+        return new THREE.Vector3(
+          Math.cos(orbAngle) * speed * 0.3,
+          (Math.random() - 0.5) * speed * 0.2,
+          Math.sin(orbAngle) * speed * 0.3
+        );
+
+      case 'explosion':
+        const dir = new THREE.Vector3(
+          Math.random() - 0.5,
+          Math.random() - 0.5,
+          Math.random() - 0.5
+        ).normalize();
+        return dir.multiplyScalar(speed);
+
+      case 'stream':
+        return new THREE.Vector3(
+          (Math.random() - 0.5) * 0.3,
+          0,
+          speed
+        );
+
+      default:
+        return new THREE.Vector3(0, speed, 0);
+    }
+  }
+
+  update(deltaTime, timeScale, globalGravity, globalTurbulence) {
+    const dt = deltaTime * timeScale;
+
+    // Emit new particles
+    const particlesToEmit = Math.floor(this.config.emissionRate * dt);
+    for (let i = 0; i < particlesToEmit && this.particles.length < this.maxParticles; i++) {
+      this.particles.push(this.createParticle());
+    }
+
+    // Update particles
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.age += dt;
+
+      if (p.age >= p.lifetime) {
+        this.particlePool.push(this.particles.splice(i, 1)[0]);
+        continue;
+      }
+
+      // Store trail position
+      p.trail.unshift(p.position.clone());
+      if (p.trail.length > this.config.trailLength) {
+        p.trail.pop();
+      }
+
+      // Apply physics based on type
+      const gravityEffect = globalGravity * this.config.gravity * 0.1;
+      p.velocity.y += gravityEffect * dt;
+
+      // Turbulence
+      const turb = globalTurbulence * this.config.turbulence;
+      p.velocity.x += (Math.random() - 0.5) * turb * dt;
+      p.velocity.z += (Math.random() - 0.5) * turb * dt;
+
+      // Vortex-specific behavior
+      if (this.config.type === 'vortex') {
+        const toCenter = new THREE.Vector3().subVectors(
+          this.config.position, p.position
+        );
+        const dist = toCenter.length();
+        if (dist > 0.1) {
+          const tangent = new THREE.Vector3(
+            -toCenter.z, 0, toCenter.x
+          ).normalize();
+          p.velocity.add(tangent.multiplyScalar(2 * dt));
+          p.velocity.add(toCenter.normalize().multiplyScalar(0.5 * dt));
+        }
+      }
+
+      // Orbital behavior
+      if (this.config.type === 'orbital') {
+        const toCenter = new THREE.Vector3().subVectors(
+          this.config.position, p.position
+        );
+        const dist = toCenter.length();
+        if (dist > 0.1) {
+          const gravPull = toCenter.normalize().multiplyScalar(3 / (dist * dist));
+          p.velocity.add(gravPull.multiplyScalar(dt));
+        }
+      }
+
+      // Update position
+      p.position.add(p.velocity.clone().multiplyScalar(dt));
+    }
+
+    // Update buffers
+    this.updateBuffers();
+  }
+
+  updateBuffers() {
+    for (let i = 0; i < this.maxParticles; i++) {
+      if (i < this.particles.length) {
+        const p = this.particles[i];
+        const lifeRatio = p.age / p.lifetime;
+
+        this.positions[i * 3] = p.position.x;
+        this.positions[i * 3 + 1] = p.position.y;
+        this.positions[i * 3 + 2] = p.position.z;
+
+        // Color shifts over lifetime
+        const birthColor = p.color.clone();
+        const deathColor = p.color.clone().multiplyScalar(0.3);
+        const currentColor = birthColor.lerp(deathColor, lifeRatio);
+
+        this.colors[i * 3] = currentColor.r;
+        this.colors[i * 3 + 1] = currentColor.g;
+        this.colors[i * 3 + 2] = currentColor.b;
+
+        // Size variation with velocity stretch
+        const velocityStretch = 1 + p.velocity.length() * 0.1;
+        this.sizes[i] = p.size * velocityStretch * (1 - lifeRatio * 0.5);
+
+        // Alpha fade at end of life
+        const alphaFade = lifeRatio < 0.8 ? 1 : 1 - (lifeRatio - 0.8) / 0.2;
+        this.alphas[i] = alphaFade;
+
+        this.lifetimes[i] = p.age;
+      } else {
+        this.sizes[i] = 0;
+        this.alphas[i] = 0;
+      }
+    }
+
+    this.mesh.geometry.attributes.position.needsUpdate = true;
+    this.mesh.geometry.attributes.customColor.needsUpdate = true;
+    this.mesh.geometry.attributes.size.needsUpdate = true;
+    this.mesh.geometry.attributes.alpha.needsUpdate = true;
+    this.mesh.geometry.attributes.lifetime.needsUpdate = true;
+  }
+
+  setColors(colors) {
+    this.config.colors = colors;
+  }
+
+  dispose() {
+    this.scene.remove(this.mesh);
+    this.mesh.geometry.dispose();
+    this.mesh.material.dispose();
+  }
+}
+*/
+
+// ============================================================================
+// GPU PARTICLE SYSTEM CLASS (NEW)
+// ============================================================================
+class GPUParticleSystem {
+  constructor(renderer, scene, particleCount = 256) {
+    this.renderer = renderer;
+    this.scene = scene;
+    this.SIZE = particleCount; // Texture width/height (total particles = SIZE²)
+    this.count = this.SIZE * this.SIZE;
+    this.initComputeRenderer();
+    this.initParticles();
+  }
+
+  initComputeRenderer() {
+    this.gpuCompute = new GPUComputationRenderer(this.SIZE, this.SIZE, this.renderer);
+
+    // Check for float texture support
+    if (!this.renderer.capabilities.isWebGL2) {
+      console.warn('WebGL2 not supported, GPGPU may not work');
+    }
+
+    // Create initial data textures
+    const dtPosition = this.gpuCompute.createTexture();
+    const dtVelocity = this.gpuCompute.createTexture();
+
+    // Fill with initial data
+    this.fillPositionTexture(dtPosition);
+    this.fillVelocityTexture(dtVelocity);
+
+    // Create computation variables
+    this.positionVariable = this.gpuCompute.addVariable(
+      'texturePosition',
+      this.getPositionShader(),
+      dtPosition
+    );
+    this.velocityVariable = this.gpuCompute.addVariable(
+      'textureVelocity',
+      this.getVelocityShader(),
+      dtVelocity
+    );
+
+    // Set variable dependencies
+    this.gpuCompute.setVariableDependencies(this.positionVariable, [this.positionVariable, this.velocityVariable]);
+    this.gpuCompute.setVariableDependencies(this.velocityVariable, [this.positionVariable, this.velocityVariable]);
+
+    // Add uniforms
+    this.positionUniforms = this.positionVariable.material.uniforms;
+    this.velocityUniforms = this.velocityVariable.material.uniforms;
+
+    this.positionUniforms.uTime = { value: 0.0 };
+    this.positionUniforms.uDelta = { value: 0.0 };
+    this.velocityUniforms.uTime = { value: 0.0 };
+    this.velocityUniforms.uDelta = { value: 0.0 };
+    this.velocityUniforms.uNoiseScale = { value: 0.5 };
+    this.velocityUniforms.uNoiseSpeed = { value: 0.2 };
+
+    // Simulation mode uniforms
+    this.velocityUniforms.uSimulationMode = { value: 0 }; // 0=flow, 1=boids, 2=nbody
+
+    // Flow mode parameters
+    this.velocityUniforms.uFlowDamping = { value: 0.98 };
+    this.velocityUniforms.uFlowMaxSpeed = { value: 8.0 };
+
+    // Boids parameters
+    this.velocityUniforms.uBoidsSeparation = { value: 1.5 };
+    this.velocityUniforms.uBoidsAlignment = { value: 1.0 };
+    this.velocityUniforms.uBoidsCohesion = { value: 1.0 };
+    this.velocityUniforms.uBoidsNeighborRadius = { value: 2.0 };
+    this.velocityUniforms.uBoidsMaxSpeed = { value: 4.0 };
+
+    // N-Body parameters
+    this.velocityUniforms.uNbodyGravConstant = { value: 0.5 };
+    this.velocityUniforms.uNbodySoftening = { value: 0.5 };
+    this.velocityUniforms.uNbodyDamping = { value: 0.999 };
+    this.velocityUniforms.uStructureMasses = { value: new Array(8).fill(1.0) };
+
+    // Multi-attractor uniforms (up to 16)
+    this.velocityUniforms.uAttractorPositions = { value: Array.from({ length: 16 }, () => new THREE.Vector3(0, 0, 0)) };
+    this.velocityUniforms.uAttractorStrengths = { value: new Array(16).fill(0.0) };
+    this.velocityUniforms.uAttractorTypes = { value: new Array(16).fill(0) };
+    this.velocityUniforms.uAttractorRadii = { value: new Array(16).fill(3.0) };
+    this.velocityUniforms.uAttractorCount = { value: 0 };
+
+    // Gravity uniforms
+    this.velocityUniforms.uGravityDir = { value: new THREE.Vector3(0, -1, 0) };
+    this.velocityUniforms.uGravityStrength = { value: 0.0 };
+
+    // Multi-shockwave uniforms (up to 5)
+    this.velocityUniforms.uShockwaveOrigins = { value: Array.from({ length: 5 }, () => new THREE.Vector3(0, 0, 0)) };
+    this.velocityUniforms.uShockwaveRadii = { value: new Array(5).fill(0.0) };
+    this.velocityUniforms.uShockwaveStrengths = { value: new Array(5).fill(0.0) };
+    this.velocityUniforms.uShockwaveThicknesses = { value: new Array(5).fill(2.0) };
+    this.velocityUniforms.uShockwaveCount = { value: 0 };
+
+    // Structure force field uniforms (up to 8)
+    this.velocityUniforms.uStructurePositions = { value: Array.from({ length: 8 }, () => new THREE.Vector3(0, 0, 0)) };
+    this.velocityUniforms.uStructureRadii = { value: new Array(8).fill(0.0) };
+    this.velocityUniforms.uStructureCount = { value: 0 };
+
+    // Initialize
+    const error = this.gpuCompute.init();
+    if (error !== null) {
+      console.error('GPUComputationRenderer error:', error);
+    }
+  }
+
+  fillPositionTexture(texture) {
+    const data = texture.image.data;
+    const radius = 5.0;
+
+    for (let i = 0; i < data.length; i += 4) {
+      // Random position in sphere
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      const r = Math.cbrt(Math.random()) * radius;
+
+      data[i + 0] = r * Math.sin(phi) * Math.cos(theta); // x
+      data[i + 1] = r * Math.sin(phi) * Math.sin(theta); // y
+      data[i + 2] = r * Math.cos(phi);                   // z
+      data[i + 3] = Math.random() * 5.0 + 2.0;           // lifetime
+    }
+  }
+
+  fillVelocityTexture(texture) {
+    const data = texture.image.data;
+
+    for (let i = 0; i < data.length; i += 4) {
+      data[i + 0] = (Math.random() - 0.5) * 0.5; // vx
+      data[i + 1] = (Math.random() - 0.5) * 0.5; // vy
+      data[i + 2] = (Math.random() - 0.5) * 0.5; // vz
+      data[i + 3] = 1.0;                          // mass
+    }
+  }
+
+  getPositionShader() {
+    return `
+      uniform float uTime;
+      uniform float uDelta;
+
+      void main() {
+        vec2 uv = gl_FragCoord.xy / resolution.xy;
+        vec4 pos = texture2D(texturePosition, uv);
+        vec4 vel = texture2D(textureVelocity, uv);
+
+        // Update position
+        pos.xyz += vel.xyz * uDelta;
+
+        // Decrease lifetime
+        pos.w -= uDelta;
+
+        // Respawn if dead
+        if (pos.w <= 0.0) {
+          // Respawn at random position in sphere
+          float theta = fract(sin(uv.x * 123.456 + uTime) * 43758.5453) * 6.28318;
+          float phi = acos(2.0 * fract(sin(uv.y * 789.012 + uTime) * 43758.5453) - 1.0);
+          float r = pow(fract(sin((uv.x + uv.y) * 456.789 + uTime) * 43758.5453), 0.333) * 3.0;
+
+          pos.x = r * sin(phi) * cos(theta);
+          pos.y = r * sin(phi) * sin(theta);
+          pos.z = r * cos(phi);
+          pos.w = 3.0 + fract(sin(uv.x * uv.y * 999.0 + uTime) * 43758.5453) * 4.0;
+        }
+
+        gl_FragColor = pos;
+      }
+    `;
+  }
+
+  getVelocityShader() {
+    return `
+      uniform float uTime;
+      uniform float uDelta;
+      uniform float uNoiseScale;
+      uniform float uNoiseSpeed;
+
+      // Simulation mode: 0=flow, 1=boids, 2=nbody
+      uniform int uSimulationMode;
+
+      // Flow mode parameters
+      uniform float uFlowDamping;
+      uniform float uFlowMaxSpeed;
+
+      // Boids parameters
+      uniform float uBoidsSeparation;
+      uniform float uBoidsAlignment;
+      uniform float uBoidsCohesion;
+      uniform float uBoidsNeighborRadius;
+      uniform float uBoidsMaxSpeed;
+
+      // N-Body parameters
+      uniform float uNbodyGravConstant;
+      uniform float uNbodySoftening;
+      uniform float uNbodyDamping;
+      uniform float uStructureMasses[8];
+
+      // Multi-attractor system (up to 16 attractors)
+      uniform vec3 uAttractorPositions[16];
+      uniform float uAttractorStrengths[16];
+      uniform int uAttractorTypes[16]; // 0=point, 1=vortex, 2=orbit, 3=repulsor
+      uniform float uAttractorRadii[16];
+      uniform int uAttractorCount;
+
+      // Gravity uniforms
+      uniform vec3 uGravityDir;
+      uniform float uGravityStrength;
+
+      // Multi-shockwave uniforms (up to 5 shockwaves)
+      uniform vec3 uShockwaveOrigins[5];
+      uniform float uShockwaveRadii[5];
+      uniform float uShockwaveStrengths[5];
+      uniform float uShockwaveThicknesses[5];
+      uniform int uShockwaveCount;
+
+      // Structure force fields (up to 8 structures)
+      uniform vec3 uStructurePositions[8];
+      uniform float uStructureRadii[8];
+      uniform int uStructureCount;
+
+      // Simplex noise functions
+      vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+      vec4 permute(vec4 x) { return mod289(((x * 34.0) + 1.0) * x); }
+      vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+      float snoise(vec3 v) {
+        const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
+        const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+
+        vec3 i = floor(v + dot(v, C.yyy));
+        vec3 x0 = v - i + dot(i, C.xxx);
+
+        vec3 g = step(x0.yzx, x0.xyz);
+        vec3 l = 1.0 - g;
+        vec3 i1 = min(g.xyz, l.zxy);
+        vec3 i2 = max(g.xyz, l.zxy);
+
+        vec3 x1 = x0 - i1 + C.xxx;
+        vec3 x2 = x0 - i2 + C.yyy;
+        vec3 x3 = x0 - D.yyy;
+
+        i = mod289(i);
+        vec4 p = permute(permute(permute(
+          i.z + vec4(0.0, i1.z, i2.z, 1.0))
+          + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+          + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+
+        float n_ = 0.142857142857;
+        vec3 ns = n_ * D.wyz - D.xzx;
+
+        vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+
+        vec4 x_ = floor(j * ns.z);
+        vec4 y_ = floor(j - 7.0 * x_);
+
+        vec4 x = x_ * ns.x + ns.yyyy;
+        vec4 y = y_ * ns.x + ns.yyyy;
+        vec4 h = 1.0 - abs(x) - abs(y);
+
+        vec4 b0 = vec4(x.xy, y.xy);
+        vec4 b1 = vec4(x.zw, y.zw);
+
+        vec4 s0 = floor(b0) * 2.0 + 1.0;
+        vec4 s1 = floor(b1) * 2.0 + 1.0;
+        vec4 sh = -step(h, vec4(0.0));
+
+        vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+        vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+
+        vec3 p0 = vec3(a0.xy, h.x);
+        vec3 p1 = vec3(a0.zw, h.y);
+        vec3 p2 = vec3(a1.xy, h.z);
+        vec3 p3 = vec3(a1.zw, h.w);
+
+        vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+        p0 *= norm.x;
+        p1 *= norm.y;
+        p2 *= norm.z;
+        p3 *= norm.w;
+
+        vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
+        m = m * m;
+        return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+      }
+
+      vec3 curlNoise(vec3 p) {
+        const float e = 0.1;
+        float n1 = snoise(p + vec3(e, 0, 0));
+        float n2 = snoise(p - vec3(e, 0, 0));
+        float n3 = snoise(p + vec3(0, e, 0));
+        float n4 = snoise(p - vec3(0, e, 0));
+        float n5 = snoise(p + vec3(0, 0, e));
+        float n6 = snoise(p - vec3(0, 0, e));
+
+        float x = (n3 - n4) - (n5 - n6);
+        float y = (n5 - n6) - (n1 - n2);
+        float z = (n1 - n2) - (n3 - n4);
+
+        return normalize(vec3(x, y, z));
+      }
+
+      void main() {
+        vec2 uv = gl_FragCoord.xy / resolution.xy;
+        vec4 pos = texture2D(texturePosition, uv);
+        vec4 vel = texture2D(textureVelocity, uv);
+
+        vec3 acceleration = vec3(0.0);
+        float damping = uFlowDamping;
+        float maxSpeed = uFlowMaxSpeed;
+
+        // BOIDS MODE (Flocking simulation)
+        if (uSimulationMode == 1) {
+          vec3 separation = vec3(0.0);
+          vec3 alignment = vec3(0.0);
+          vec3 cohesion = vec3(0.0);
+          int neighborCount = 0;
+
+          // Sample 16 neighbors using pseudo-random offsets
+          for (int i = 0; i < 16; i++) {
+            float fi = float(i);
+            vec2 neighborUV = fract(uv + vec2(fi * 0.618033, fi * 0.381966));
+            vec4 neighborPos = texture2D(texturePosition, neighborUV);
+            vec4 neighborVel = texture2D(textureVelocity, neighborUV);
+
+            vec3 toNeighbor = neighborPos.xyz - pos.xyz;
+            float dist = length(toNeighbor);
+
+            if (dist < uBoidsNeighborRadius && dist > 0.01) {
+              // Separation: avoid crowding neighbors
+              if (dist < uBoidsNeighborRadius * 0.5) {
+                separation -= normalize(toNeighbor) / max(dist, 0.01);
+              }
+
+              // Alignment: steer toward average heading
+              alignment += neighborVel.xyz;
+
+              // Cohesion: steer toward center of mass
+              cohesion += neighborPos.xyz;
+
+              neighborCount++;
+            }
+          }
+
+          if (neighborCount > 0) {
+            alignment /= float(neighborCount);
+            cohesion = cohesion / float(neighborCount) - pos.xyz;
+          }
+
+          // Apply weighted forces
+          acceleration += separation * uBoidsSeparation;
+          acceleration += alignment * uBoidsAlignment * 0.1;
+          acceleration += cohesion * uBoidsCohesion * 0.1;
+
+          // Light curl noise for organic feel (20% strength)
+          vec3 noisePos = pos.xyz * uNoiseScale + uTime * uNoiseSpeed;
+          vec3 curl = curlNoise(noisePos);
+          acceleration += curl * 0.4;
+
+          // Containment force - push back toward origin when far
+          float distFromOrigin = length(pos.xyz);
+          if (distFromOrigin > 8.0) {
+            acceleration -= normalize(pos.xyz) * (distFromOrigin - 8.0) * 0.5;
+          }
+
+          maxSpeed = uBoidsMaxSpeed;
+        }
+        // N-BODY MODE (Gravitational simulation)
+        else if (uSimulationMode == 2) {
+          // Structures act as massive bodies
+          for (int i = 0; i < 8; i++) {
+            if (i >= uStructureCount) break;
+
+            vec3 toStructure = uStructurePositions[i] - pos.xyz;
+            float dist = length(toStructure);
+
+            if (dist > 0.1) {
+              vec3 dir = normalize(toStructure);
+              float mass = uStructureMasses[i];
+              // F = G * M / (r^2 + softening)
+              float force = uNbodyGravConstant * mass / (dist * dist + uNbodySoftening);
+              acceleration += dir * force;
+            }
+          }
+
+          // Weak inter-particle gravity (sample 8 nearby particles)
+          for (int i = 0; i < 8; i++) {
+            float fi = float(i);
+            vec2 neighborUV = fract(uv + vec2(fi * 0.707107, fi * 0.292893));
+            vec4 neighborPos = texture2D(texturePosition, neighborUV);
+
+            vec3 toNeighbor = neighborPos.xyz - pos.xyz;
+            float dist = length(toNeighbor);
+
+            if (dist > 0.1 && dist < 3.0) {
+              vec3 dir = normalize(toNeighbor);
+              float force = 0.001 / (dist * dist + 0.1);
+              acceleration += dir * force;
+            }
+          }
+
+          // No curl noise in n-body mode
+          damping = uNbodyDamping; // Preserve orbital energy
+          maxSpeed = 20.0; // Higher speed limit for orbital motion
+        }
+        // FLOW MODE (Default - attractors + noise)
+        else {
+          // Multi-attractor forces
+          for (int i = 0; i < 16; i++) {
+            if (i >= uAttractorCount) break;
+
+            vec3 toAttractor = uAttractorPositions[i] - pos.xyz;
+            float dist = length(toAttractor);
+
+            if (dist > 0.1) {
+              vec3 dir = normalize(toAttractor);
+              float strength = uAttractorStrengths[i];
+              float radius = uAttractorRadii[i];
+
+              if (uAttractorTypes[i] == 0) {
+                // Point attractor - standard inverse square falloff
+                acceleration += dir * strength / (dist * dist + 0.5);
+              } else if (uAttractorTypes[i] == 1) {
+                // Vortex - tangential force with weak radial pull
+                vec3 tangent = normalize(cross(dir, vec3(0.0, 1.0, 0.0)));
+                if (length(tangent) < 0.1) {
+                  tangent = normalize(cross(dir, vec3(1.0, 0.0, 0.0)));
+                }
+                acceleration += tangent * strength / (dist + 0.5);
+                acceleration += dir * strength * 0.2 / (dist * dist + 0.5); // weak pull
+              } else if (uAttractorTypes[i] == 2) {
+                // Orbit - force toward attractor that weakens inside radius (stable orbit)
+                float radiusFactor = smoothstep(0.0, radius, dist);
+                acceleration += dir * strength * radiusFactor / (dist * dist + 0.5);
+              } else if (uAttractorTypes[i] == 3) {
+                // Repulsor - push away from attractor
+                acceleration -= dir * strength / (dist * dist + 0.5);
+              }
+            }
+          }
+
+          // Gravity force
+          if (uGravityStrength > 0.001) {
+            acceleration += uGravityDir * uGravityStrength;
+          }
+
+          // Structure force fields - deflection/repulsion
+          for (int i = 0; i < 8; i++) {
+            if (i >= uStructureCount) break;
+
+            vec3 toParticle = pos.xyz - uStructurePositions[i];
+            float dist = length(toParticle);
+            float radius = uStructureRadii[i];
+
+            // If particle is within 1.3x structure radius, push it away
+            if (dist < radius * 1.3) {
+              vec3 pushDir = normalize(toParticle);
+              float penetration = radius * 1.3 - dist;
+              float repulsionStrength = 5.0;
+              acceleration += pushDir * repulsionStrength * penetration / max(dist - radius, 0.1);
+            }
+          }
+
+          // Curl noise for organic movement
+          vec3 noisePos = pos.xyz * uNoiseScale + uTime * uNoiseSpeed;
+          vec3 curl = curlNoise(noisePos);
+          acceleration += curl * 2.0;
+        }
+
+        // Multi-shockwave forces (active in all modes)
+        for (int i = 0; i < 5; i++) {
+          if (i >= uShockwaveCount) break;
+
+          if (uShockwaveStrengths[i] > 0.01) {
+            vec3 toParticle = pos.xyz - uShockwaveOrigins[i];
+            float particleDist = length(toParticle);
+
+            float shellDist = abs(particleDist - uShockwaveRadii[i]);
+
+            if (shellDist < uShockwaveThicknesses[i]) {
+              float shellFalloff = 1.0 - (shellDist / uShockwaveThicknesses[i]);
+              shellFalloff = shellFalloff * shellFalloff;
+
+              vec3 pushDir = normalize(toParticle);
+              vec3 tangent = normalize(cross(pushDir, vec3(0.0, 1.0, 0.0)));
+              if (length(tangent) < 0.1) {
+                tangent = normalize(cross(pushDir, vec3(1.0, 0.0, 0.0)));
+              }
+
+              vec3 shockForce = pushDir * uShockwaveStrengths[i] * shellFalloff;
+              shockForce += tangent * uShockwaveStrengths[i] * shellFalloff * 0.3;
+
+              acceleration += shockForce;
+            }
+          }
+        }
+
+        // Apply acceleration
+        vel.xyz += acceleration * uDelta;
+
+        // Damping
+        vel.xyz *= damping;
+
+        // Speed limit
+        float speed = length(vel.xyz);
+        if (speed > maxSpeed) {
+          vel.xyz = normalize(vel.xyz) * maxSpeed;
+        }
+
+        // Reset velocity if particle respawned
+        if (pos.w <= 0.0) {
+          vel.xyz = vec3(0.0);
+        }
+
+        gl_FragColor = vel;
+      }
+    `;
+  }
+
+  initParticles() {
+    // Create geometry with reference UVs
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(this.count * 3);
+    const references = new Float32Array(this.count * 2);
+
+    for (let i = 0; i < this.count; i++) {
+      const x = (i % this.SIZE) / this.SIZE;
+      const y = Math.floor(i / this.SIZE) / this.SIZE;
+
+      references[i * 2 + 0] = x;
+      references[i * 2 + 1] = y;
+
+      positions[i * 3 + 0] = 0;
+      positions[i * 3 + 1] = 0;
+      positions[i * 3 + 2] = 0;
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('reference', new THREE.BufferAttribute(references, 2));
+
+    // Create material
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        texturePosition: { value: null },
+        textureVelocity: { value: null },
+        uTime: { value: 0 },
+        uColor1: { value: new THREE.Color(0x00ffaa) },
+        uColor2: { value: new THREE.Color(0x00aaff) },
+        uColor3: { value: new THREE.Color(0xaa55ff) },
+        uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+        uSize: { value: 4.0 },
+        uColorMode: { value: 0 }, // 0=speed, 1=direction, 2=acceleration
+        uGlowIntensity: { value: 1.5 }
+      },
+      vertexShader: `
+        uniform sampler2D texturePosition;
+        uniform sampler2D textureVelocity;
+        uniform float uPixelRatio;
+        uniform float uSize;
+        uniform float uTime;
+        uniform int uColorMode; // 0=speed, 1=direction, 2=acceleration
+
+        attribute vec2 reference;
+
+        varying vec3 vColor;
+        varying float vAlpha;
+        varying float vLife;
+
+        // HSV to RGB conversion for direction-based coloring
+        vec3 hsv2rgb(vec3 c) {
+          vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+          vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+          return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+        }
+
+        void main() {
+          vec4 pos = texture2D(texturePosition, reference);
+          vec4 vel = texture2D(textureVelocity, reference);
+
+          float life = pos.w / 7.0; // Normalize
+          float speed = length(vel.xyz);
+
+          // Life-based alpha
+          vAlpha = smoothstep(0.0, 0.15, life) * smoothstep(1.0, 0.7, life);
+          vLife = life;
+
+          // Color based on mode
+          if (uColorMode == 1) {
+            // Direction-based: map velocity direction to hue
+            vec3 velDir = normalize(vel.xyz);
+            float hue = atan(velDir.z, velDir.x) / 6.28318 + 0.5;
+            float saturation = 0.8;
+            float value = 0.5 + speed * 0.3;
+            vColor = hsv2rgb(vec3(hue, saturation, value));
+          } else if (uColorMode == 2) {
+            // Acceleration-based: highlight changes
+            // Approximate acceleration by speed variation
+            float accelHighlight = smoothstep(2.0, 6.0, speed);
+            vColor = mix(
+              vec3(0.0, 0.5, 1.0), // Blue for low acceleration
+              vec3(1.0, 0.3, 0.0), // Orange for high acceleration
+              accelHighlight
+            );
+          } else {
+            // Speed-based (default)
+            float colorMix = clamp(speed * 0.3, 0.0, 1.0);
+            vColor = mix(vec3(0.0, 1.0, 0.67), vec3(1.0, 0.4, 0.2), colorMix);
+          }
+
+          vec4 mvPosition = modelViewMatrix * vec4(pos.xyz, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+
+          // Size with attenuation
+          float sizeAtten = 200.0 / -mvPosition.z;
+          gl_PointSize = uSize * sizeAtten * uPixelRatio * (0.5 + speed * 0.2);
+          gl_PointSize = max(gl_PointSize, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float uGlowIntensity;
+
+        varying vec3 vColor;
+        varying float vAlpha;
+        varying float vLife;
+
+        void main() {
+          vec2 center = gl_PointCoord - 0.5;
+          float dist = length(center);
+
+          // Soft glow with bright core
+          float core = exp(-dist * 10.0) * uGlowIntensity;
+          float glow = exp(-dist * 4.0);
+          float outer = exp(-dist * 2.0) * 0.4;
+
+          float intensity = core + glow * 0.5 + outer * 0.2;
+          intensity *= smoothstep(0.5, 0.15, dist);
+
+          // Pulse
+          intensity *= 0.9 + sin(vLife * 15.0) * 0.1;
+
+          vec3 finalColor = vColor * intensity;
+          float finalAlpha = vAlpha * intensity;
+
+          if (finalAlpha < 0.01) discard;
+
+          gl_FragColor = vec4(finalColor, finalAlpha);
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+
+    this.particles = new THREE.Points(geometry, material);
+    this.particles.frustumCulled = false;
+    this.scene.add(this.particles);
+  }
+
+  update(deltaTime, elapsedTime) {
+    // Clamp delta to avoid instability
+    const dt = Math.min(deltaTime, 0.05);
+
+    // Update uniforms
+    this.positionUniforms.uTime.value = elapsedTime;
+    this.positionUniforms.uDelta.value = dt;
+    this.velocityUniforms.uTime.value = elapsedTime;
+    this.velocityUniforms.uDelta.value = dt;
+
+    // Compute
+    this.gpuCompute.compute();
+
+    // Update particle material with new textures
+    this.particles.material.uniforms.texturePosition.value =
+      this.gpuCompute.getCurrentRenderTarget(this.positionVariable).texture;
+    this.particles.material.uniforms.textureVelocity.value =
+      this.gpuCompute.getCurrentRenderTarget(this.velocityVariable).texture;
+    this.particles.material.uniforms.uTime.value = elapsedTime;
+  }
+
+  setAttractors(attractors) {
+    // attractors is an array of attractor objects with {position, strength, type, radius}
+    const count = Math.min(attractors.length, 16);
+    this.velocityUniforms.uAttractorCount.value = count;
+
+    for (let i = 0; i < count; i++) {
+      const attr = attractors[i];
+      this.velocityUniforms.uAttractorPositions.value[i].copy(attr.position);
+      this.velocityUniforms.uAttractorStrengths.value[i] = attr.strength;
+      // type mapping: 'point'=0, 'vortex'=1, 'orbit'=2, 'repulsor'=3
+      const typeMap = { 'point': 0, 'vortex': 1, 'orbit': 2, 'repulsor': 3 };
+      this.velocityUniforms.uAttractorTypes.value[i] = typeMap[attr.type] || 0;
+      this.velocityUniforms.uAttractorRadii.value[i] = attr.radius || 3.0;
+    }
+
+    // Clear remaining slots
+    for (let i = count; i < 16; i++) {
+      this.velocityUniforms.uAttractorStrengths.value[i] = 0.0;
+    }
+  }
+
+  setGravity(direction, strength) {
+    this.velocityUniforms.uGravityDir.value.copy(direction);
+    this.velocityUniforms.uGravityStrength.value = strength;
+  }
+
+  setShockwaves(shockwaves) {
+    // shockwaves is an array of shockwave objects with {origin, radius, strength, thickness}
+    const count = Math.min(shockwaves.length, 5);
+    this.velocityUniforms.uShockwaveCount.value = count;
+
+    for (let i = 0; i < count; i++) {
+      const sw = shockwaves[i];
+      this.velocityUniforms.uShockwaveOrigins.value[i].copy(sw.origin);
+      this.velocityUniforms.uShockwaveRadii.value[i] = sw.radius;
+      this.velocityUniforms.uShockwaveStrengths.value[i] = sw.strength;
+      this.velocityUniforms.uShockwaveThicknesses.value[i] = sw.thickness;
+    }
+
+    // Clear remaining slots
+    for (let i = count; i < 5; i++) {
+      this.velocityUniforms.uShockwaveStrengths.value[i] = 0.0;
+    }
+  }
+
+  setStructures(structures) {
+    // structures is an array of structure objects with {position, radius}
+    const count = Math.min(structures.length, 8);
+    this.velocityUniforms.uStructureCount.value = count;
+
+    for (let i = 0; i < count; i++) {
+      const struct = structures[i];
+      this.velocityUniforms.uStructurePositions.value[i].copy(struct.position);
+      this.velocityUniforms.uStructureRadii.value[i] = struct.radius;
+    }
+
+    // Clear remaining slots
+    for (let i = count; i < 8; i++) {
+      this.velocityUniforms.uStructureRadii.value[i] = 0.0;
+    }
+  }
+
+  setColors(color1, color2, color3) {
+    this.particles.material.uniforms.uColor1.value.set(color1);
+    this.particles.material.uniforms.uColor2.value.set(color2);
+    this.particles.material.uniforms.uColor3.value.set(color3);
+  }
+
+  dispose() {
+    this.particles.geometry.dispose();
+    this.particles.material.dispose();
+    this.scene.remove(this.particles);
+    // GPUComputationRenderer doesn't have a dispose method, but textures are managed internally
+  }
+}
+
+// ============================================================================
+// ATTRACTOR CLASS
+// ============================================================================
+class Attractor {
+  constructor(position, strength, type = 'point') {
+    this.position = position.clone();
+    this.strength = strength;
+    this.type = type; // 'point', 'vortex', 'orbit', 'repulsor'
+    this.active = true;
+    this.radius = 3.0; // for orbit type
+    this.vortexAxis = new THREE.Vector3(0, 1, 0); // for vortex type
+  }
+
+  setPosition(position) {
+    this.position.copy(position);
+  }
+
+  toUniformData() {
+    const typeMap = { 'point': 0, 'vortex': 1, 'orbit': 2, 'repulsor': 3 };
+    return {
+      position: this.position,
+      strength: this.active ? this.strength : 0,
+      type: typeMap[this.type] || 0,
+      radius: this.radius
+    };
+  }
+}
+
+// ============================================================================
+// SHOCKWAVE MANAGER CLASS
+// ============================================================================
+class ShockwaveManager {
+  constructor(maxShockwaves = 5) {
+    this.shockwaves = [];
+    this.maxShockwaves = maxShockwaves;
+  }
+
+  trigger(origin, strength = 10.0, thickness = 2.0, expansionSpeed = 8.0) {
+    // Remove oldest if at max
+    if (this.shockwaves.length >= this.maxShockwaves) {
+      this.shockwaves.shift();
+    }
+
+    this.shockwaves.push({
+      origin: origin.clone(),
+      radius: 0.1,
+      strength: strength,
+      thickness: thickness,
+      expansionSpeed: expansionSpeed,
+      decay: 0.92,
+      active: true
+    });
+  }
+
+  update(deltaTime) {
+    for (let i = this.shockwaves.length - 1; i >= 0; i--) {
+      const sw = this.shockwaves[i];
+
+      sw.radius += sw.expansionSpeed * deltaTime;
+      sw.strength *= sw.decay;
+
+      // Remove when too weak or too large
+      if (sw.radius > 25 || sw.strength < 0.05) {
+        this.shockwaves.splice(i, 1);
+      }
+    }
+  }
+
+  getActiveShockwave() {
+    // Return the strongest active shockwave for the shader
+    if (this.shockwaves.length === 0) {
+      return {
+        origin: new THREE.Vector3(0, 0, 0),
+        radius: 0,
+        strength: 0,
+        thickness: 1
+      };
+    }
+
+    // Find strongest
+    let strongest = this.shockwaves[0];
+    for (const sw of this.shockwaves) {
+      if (sw.strength > strongest.strength) {
+        strongest = sw;
+      }
+    }
+
+    return strongest;
+  }
+
+  getAllShockwaves() {
+    // Return all active shockwaves for multi-shockwave support
+    return this.shockwaves;
+  }
+
+  hasActive() {
+    return this.shockwaves.length > 0;
+  }
+
+  clear() {
+    this.shockwaves = [];
+  }
+}
+
+// ============================================================================
+// WAVE GRID CLASS
+// ============================================================================
+class WaveGrid {
+  constructor(scene, config = {}) {
+    this.scene = scene;
+    this.config = {
+      size: 128,           // Grid size (size x size points)
+      gridScale: 20,       // World space size of the grid
+      waveAmplitude: 1.0,
+      waveFrequency: 0.5,
+      waveSpeed: 1.0,
+      color1: '#00ffaa',
+      color2: '#00aaff',
+      color3: '#aa55ff',
+      opacity: 0.6,
+      particleSize: 2.0,
+      yOffset: -5.0,       // Vertical position offset
+      ...config
+    };
+
+    this.time = 0;
+    this.visible = true;
+    this.createGrid();
+    this.scene.add(this.mesh);
+  }
+
+  createGrid() {
+    const size = this.config.size;
+    const gridScale = this.config.gridScale;
+
+    // Create geometry
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(size * size * 3);
+    const uvs = new Float32Array(size * size * 2);
+
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        const idx = i * size + j;
+        // Position in XZ plane
+        positions[idx * 3 + 0] = (i / size - 0.5) * gridScale;
+        positions[idx * 3 + 1] = 0; // Y will be computed in shader
+        positions[idx * 3 + 2] = (j / size - 0.5) * gridScale;
+        // UV coordinates
+        uvs[idx * 2 + 0] = i / size;
+        uvs[idx * 2 + 1] = j / size;
+      }
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+
+    // Create material with wave shaders
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uWaveAmplitude: { value: this.config.waveAmplitude },
+        uWaveFrequency: { value: this.config.waveFrequency },
+        uWaveSpeed: { value: this.config.waveSpeed },
+        uColor1: { value: new THREE.Color(this.config.color1) },
+        uColor2: { value: new THREE.Color(this.config.color2) },
+        uColor3: { value: new THREE.Color(this.config.color3) },
+        uOpacity: { value: this.config.opacity },
+        uSize: { value: this.config.particleSize },
+        uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+        uYOffset: { value: this.config.yOffset }
+      },
+      vertexShader: `
+        uniform float uTime;
+        uniform float uWaveAmplitude;
+        uniform float uWaveFrequency;
+        uniform float uWaveSpeed;
+        uniform float uSize;
+        uniform float uPixelRatio;
+        uniform float uYOffset;
+
+        varying float vHeight;
+        varying vec2 vUv;
+
+        // Simplex noise for organic waves
+        vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+        vec4 permute(vec4 x) { return mod289(((x * 34.0) + 1.0) * x); }
+        vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+        float snoise(vec3 v) {
+          const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
+          const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+
+          vec3 i = floor(v + dot(v, C.yyy));
+          vec3 x0 = v - i + dot(i, C.xxx);
+
+          vec3 g = step(x0.yzx, x0.xyz);
+          vec3 l = 1.0 - g;
+          vec3 i1 = min(g.xyz, l.zxy);
+          vec3 i2 = max(g.xyz, l.zxy);
+
+          vec3 x1 = x0 - i1 + C.xxx;
+          vec3 x2 = x0 - i2 + C.yyy;
+          vec3 x3 = x0 - D.yyy;
+
+          i = mod289(i);
+          vec4 p = permute(permute(permute(
+            i.z + vec4(0.0, i1.z, i2.z, 1.0))
+            + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+            + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+
+          float n_ = 0.142857142857;
+          vec3 ns = n_ * D.wyz - D.xzx;
+
+          vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+
+          vec4 x_ = floor(j * ns.z);
+          vec4 y_ = floor(j - 7.0 * x_);
+
+          vec4 x = x_ * ns.x + ns.yyyy;
+          vec4 y = y_ * ns.x + ns.yyyy;
+          vec4 h = 1.0 - abs(x) - abs(y);
+
+          vec4 b0 = vec4(x.xy, y.xy);
+          vec4 b1 = vec4(x.zw, y.zw);
+
+          vec4 s0 = floor(b0) * 2.0 + 1.0;
+          vec4 s1 = floor(b1) * 2.0 + 1.0;
+          vec4 sh = -step(h, vec4(0.0));
+
+          vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+          vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+
+          vec3 p0 = vec3(a0.xy, h.x);
+          vec3 p1 = vec3(a0.zw, h.y);
+          vec3 p2 = vec3(a1.xy, h.z);
+          vec3 p3 = vec3(a1.zw, h.w);
+
+          vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+          p0 *= norm.x;
+          p1 *= norm.y;
+          p2 *= norm.z;
+          p3 *= norm.w;
+
+          vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
+          m = m * m;
+          return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
+        }
+
+        void main() {
+          vUv = uv;
+          vec3 pos = position;
+
+          // Multiple wave layers for organic motion
+          float wave1 = sin(pos.x * uWaveFrequency + uTime * uWaveSpeed) * uWaveAmplitude;
+          float wave2 = sin(pos.z * uWaveFrequency * 0.8 + uTime * uWaveSpeed * 1.2) * uWaveAmplitude * 0.7;
+          float wave3 = snoise(vec3(pos.xz * 0.3, uTime * 0.2)) * uWaveAmplitude * 0.5;
+          float wave4 = snoise(vec3(pos.xz * 0.15, uTime * 0.1)) * uWaveAmplitude * 0.8;
+
+          // Combine waves
+          pos.y = wave1 + wave2 + wave3 + wave4 + uYOffset;
+
+          // Normalize height for color mapping
+          vHeight = (pos.y - uYOffset) / (uWaveAmplitude * 3.0) * 0.5 + 0.5;
+
+          vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+
+          // Size with distance attenuation
+          float sizeAtten = 300.0 / -mvPosition.z;
+          gl_PointSize = uSize * sizeAtten * uPixelRatio;
+          gl_PointSize = max(gl_PointSize, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uColor1;
+        uniform vec3 uColor2;
+        uniform vec3 uColor3;
+        uniform float uOpacity;
+        uniform float uTime;
+
+        varying float vHeight;
+        varying vec2 vUv;
+
+        void main() {
+          // Distance from center of point
+          vec2 center = gl_PointCoord - 0.5;
+          float dist = length(center);
+
+          // Soft circular falloff
+          float alpha = smoothstep(0.5, 0.2, dist);
+          
+          // Add glow
+          float glow = exp(-dist * 4.0) * 0.8;
+          alpha = max(alpha, glow);
+
+          // Three-way color blend based on height
+          vec3 color;
+          if (vHeight < 0.5) {
+            color = mix(uColor1, uColor2, vHeight * 2.0);
+          } else {
+            color = mix(uColor2, uColor3, (vHeight - 0.5) * 2.0);
+          }
+
+          // Add subtle pulse
+          float pulse = sin(uTime * 2.0 + vUv.x * 10.0 + vUv.y * 10.0) * 0.1 + 0.9;
+          color *= pulse;
+
+          if (alpha < 0.01) discard;
+
+          gl_FragColor = vec4(color, alpha * uOpacity);
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+
+    this.mesh = new THREE.Points(geometry, material);
+    this.mesh.frustumCulled = false;
+  }
+
+  update(deltaTime, timeScale = 1.0) {
+    this.time += deltaTime * timeScale;
+
+    if (this.mesh && this.mesh.material.uniforms) {
+      this.mesh.material.uniforms.uTime.value = this.time;
+    }
+  }
+
+  setVisible(visible) {
+    this.visible = visible;
+    if (this.mesh) {
+      this.mesh.visible = visible;
+    }
+  }
+
+  setColors(color1, color2, color3) {
+    if (this.mesh && this.mesh.material.uniforms) {
+      this.mesh.material.uniforms.uColor1.value.set(color1);
+      this.mesh.material.uniforms.uColor2.value.set(color2);
+      this.mesh.material.uniforms.uColor3.value.set(color3);
+    }
+  }
+
+  setWaveParams(amplitude, frequency, speed) {
+    if (this.mesh && this.mesh.material.uniforms) {
+      this.mesh.material.uniforms.uWaveAmplitude.value = amplitude;
+      this.mesh.material.uniforms.uWaveFrequency.value = frequency;
+      this.mesh.material.uniforms.uWaveSpeed.value = speed;
+    }
+  }
+
+  setOpacity(opacity) {
+    if (this.mesh && this.mesh.material.uniforms) {
+      this.mesh.material.uniforms.uOpacity.value = opacity;
+    }
+  }
+
+  setParticleSize(size) {
+    if (this.mesh && this.mesh.material.uniforms) {
+      this.mesh.material.uniforms.uSize.value = size;
+    }
+  }
+
+  dispose() {
+    if (this.mesh) {
+      this.mesh.geometry.dispose();
+      this.mesh.material.dispose();
+      this.scene.remove(this.mesh);
+    }
+  }
+}
+
+// ============================================================================
+// QUALITY MANAGER CLASS - Adaptive Performance System
+// ============================================================================
+class QualityManager {
+  constructor(onQualityChange) {
+    this.frameHistory = [];
+    this.historyLength = 60;  // Track 60 frames (~1 second at 60fps)
+    this.currentQuality = 'high';
+    this.onQualityChange = onQualityChange;
+    this.cooldown = 0;
+    this.enabled = true;
+    this.lastFps = 60;
+    
+    // Quality presets with particle counts and effect settings
+    this.presets = {
+      ultra: {
+        particleSize: 512,    // 262,144 particles
+        waveSize: 192,        // 36,864 wave particles
+        bloom: true,
+        bloomStrength: 2.0,
+        chromatic: true,
+        filmGrain: true,
+        fxaa: true,
+        targetFps: 55
+      },
+      high: {
+        particleSize: 384,    // 147,456 particles
+        waveSize: 128,        // 16,384 wave particles
+        bloom: true,
+        bloomStrength: 1.5,
+        chromatic: true,
+        filmGrain: true,
+        fxaa: true,
+        targetFps: 50
+      },
+      medium: {
+        particleSize: 256,    // 65,536 particles
+        waveSize: 96,         // 9,216 wave particles
+        bloom: true,
+        bloomStrength: 1.2,
+        chromatic: false,
+        filmGrain: false,
+        fxaa: true,
+        targetFps: 40
+      },
+      low: {
+        particleSize: 192,    // 36,864 particles
+        waveSize: 64,         // 4,096 wave particles
+        bloom: true,
+        bloomStrength: 1.0,
+        chromatic: false,
+        filmGrain: false,
+        fxaa: false,
+        targetFps: 30
+      },
+      potato: {
+        particleSize: 128,    // 16,384 particles
+        waveSize: 48,         // 2,304 wave particles
+        bloom: false,
+        bloomStrength: 0,
+        chromatic: false,
+        filmGrain: false,
+        fxaa: false,
+        targetFps: 25
+      }
+    };
+    
+    this.qualityLevels = ['ultra', 'high', 'medium', 'low', 'potato'];
+  }
+  
+  update(deltaTime) {
+    if (!this.enabled) return null;
+    
+    // Calculate FPS
+    const fps = deltaTime > 0 ? Math.min(1 / deltaTime, 120) : 60;
+    this.frameHistory.push(fps);
+    
+    // Keep history at target length
+    if (this.frameHistory.length > this.historyLength) {
+      this.frameHistory.shift();
+    }
+    
+    // Update cooldown
+    this.cooldown -= deltaTime;
+    
+    // Only evaluate after collecting enough samples and cooldown elapsed
+    if (this.frameHistory.length === this.historyLength && this.cooldown <= 0) {
+      const avgFps = this.frameHistory.reduce((a, b) => a + b, 0) / this.historyLength;
+      this.lastFps = avgFps;
+      
+      const currentPreset = this.presets[this.currentQuality];
+      
+      // Check if we need to decrease quality (struggling to hit target)
+      if (avgFps < currentPreset.targetFps - 10 && this.currentQuality !== 'potato') {
+        return this.decreaseQuality();
+      }
+      
+      // Check if we can increase quality (running well above target)
+      if (avgFps > 58 && this.currentQuality !== 'ultra') {
+        return this.increaseQuality();
+      }
+    }
+    
+    return null;
+  }
+  
+  decreaseQuality() {
+    const idx = this.qualityLevels.indexOf(this.currentQuality);
+    if (idx < this.qualityLevels.length - 1) {
+      this.currentQuality = this.qualityLevels[idx + 1];
+      this.cooldown = 3.0; // Wait 3 seconds before next change
+      this.frameHistory = []; // Reset history after change
+      
+      if (this.onQualityChange) {
+        this.onQualityChange(this.currentQuality, this.presets[this.currentQuality]);
+      }
+      
+      return { quality: this.currentQuality, preset: this.presets[this.currentQuality], direction: 'decrease' };
+    }
+    return null;
+  }
+  
+  increaseQuality() {
+    const idx = this.qualityLevels.indexOf(this.currentQuality);
+    if (idx > 0) {
+      this.currentQuality = this.qualityLevels[idx - 1];
+      this.cooldown = 5.0; // Wait 5 seconds before increasing again
+      this.frameHistory = []; // Reset history after change
+      
+      if (this.onQualityChange) {
+        this.onQualityChange(this.currentQuality, this.presets[this.currentQuality]);
+      }
+      
+      return { quality: this.currentQuality, preset: this.presets[this.currentQuality], direction: 'increase' };
+    }
+    return null;
+  }
+  
+  setQuality(qualityLevel) {
+    if (this.qualityLevels.includes(qualityLevel)) {
+      this.currentQuality = qualityLevel;
+      this.frameHistory = [];
+      this.cooldown = 2.0;
+      
+      if (this.onQualityChange) {
+        this.onQualityChange(this.currentQuality, this.presets[this.currentQuality]);
+      }
+      
+      return this.presets[this.currentQuality];
+    }
+    return null;
+  }
+  
+  setEnabled(enabled) {
+    this.enabled = enabled;
+  }
+  
+  getCurrentPreset() {
+    return this.presets[this.currentQuality];
+  }
+  
+  getStats() {
+    return {
+      quality: this.currentQuality,
+      fps: Math.round(this.lastFps),
+      particleCount: Math.pow(this.presets[this.currentQuality].particleSize, 2),
+      cooldown: Math.max(0, this.cooldown).toFixed(1)
+    };
+  }
+}
+
+// ============================================================================
+// GEOMETRIC STRUCTURE CLASS
+// ============================================================================
+class GeometricStructure {
+  constructor(scene, config) {
+    this.scene = scene;
+    this.config = {
+      type: 'icosahedron',
+      position: new THREE.Vector3(0, 0, 0),
+      rotationSpeed: { x: 0.1, y: 0.2, z: 0.05 },
+      scale: 1,
+      pulseIntensity: 0.1,
+      materialStyle: 'holographic',
+      complexity: 1,
+      color: '#00ffaa',
+      ...config
+    };
+
+    this.group = new THREE.Group();
+    this.group.position.copy(this.config.position);
+    this.time = Math.random() * 100;
+    this.energyOffset = Math.random() * Math.PI * 2;
+
+    this.createStructure();
+    this.scene.add(this.group);
+  }
+
+  createStructure() {
+    // Clear existing
+    while (this.group.children.length) {
+      const child = this.group.children[0];
+      this.group.remove(child);
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    }
+
+    switch (this.config.type) {
+      case 'icosahedron':
+        this.createNestedIcosahedron();
+        break;
+      case 'torus':
+        this.createAnimatedTorus();
+        break;
+      case 'rings':
+        this.createConcentricRings();
+        break;
+      case 'helix':
+        this.createDNAHelix();
+        break;
+      case 'mobius':
+        this.createMobiusStrip();
+        break;
+      default:
+        this.createNestedIcosahedron();
+    }
+  }
+
+  createNestedIcosahedron() {
+    const color = new THREE.Color(this.config.color);
+
+    // Outer dodecahedron
+    const outerGeo = new THREE.DodecahedronGeometry(1.5 * this.config.scale, 0);
+    const outerEdges = new THREE.EdgesGeometry(outerGeo);
+
+    // Glowing tube edges for outer
+    this.createGlowingEdges(outerEdges, color, 1.5);
+
+    // Inner icosahedron
+    const innerGeo = new THREE.IcosahedronGeometry(0.8 * this.config.scale, this.config.complexity);
+    const innerEdges = new THREE.EdgesGeometry(innerGeo);
+
+    // Inner mesh with glass material
+    const innerMaterial = this.createMaterial(color);
+    const innerMesh = new THREE.Mesh(innerGeo, innerMaterial);
+    innerMesh.userData.isInner = true;
+    this.group.add(innerMesh);
+
+    // Glowing edges for inner
+    this.createGlowingEdges(innerEdges, color.clone().multiplyScalar(1.5), 0.8);
+
+    // Core glow
+    const coreGeo = new THREE.SphereGeometry(0.3 * this.config.scale, 16, 16);
+    const coreMaterial = new THREE.MeshBasicMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.5
+    });
+    const core = new THREE.Mesh(coreGeo, coreMaterial);
+    core.userData.isCore = true;
+    this.group.add(core);
+  }
+
+  createAnimatedTorus() {
+    const color = new THREE.Color(this.config.color);
+
+    // Main torus
+    const torusGeo = new THREE.TorusGeometry(
+      1 * this.config.scale,
+      0.3 * this.config.scale,
+      16,
+      50
+    );
+    const torusMaterial = this.createMaterial(color);
+    const torus = new THREE.Mesh(torusGeo, torusMaterial);
+    this.group.add(torus);
+
+    // Inner rotating pattern
+    for (let i = 0; i < 3; i++) {
+      const innerTorusGeo = new THREE.TorusGeometry(
+        0.5 * this.config.scale,
+        0.05 * this.config.scale,
+        8,
+        30
+      );
+      const innerMaterial = new THREE.MeshBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: 0.8
+      });
+      const innerTorus = new THREE.Mesh(innerTorusGeo, innerMaterial);
+      innerTorus.rotation.x = (i / 3) * Math.PI;
+      innerTorus.userData.rotationOffset = i;
+      this.group.add(innerTorus);
+    }
+
+    // Edge glow
+    const edges = new THREE.EdgesGeometry(torusGeo);
+    this.createGlowingEdges(edges, color, 1);
+  }
+
+  createConcentricRings() {
+    const color = new THREE.Color(this.config.color);
+
+    for (let i = 0; i < 4; i++) {
+      const radius = (0.5 + i * 0.4) * this.config.scale;
+      const ringGeo = new THREE.TorusGeometry(radius, 0.03 * this.config.scale, 8, 64);
+      const ringMaterial = new THREE.MeshBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: 0.9 - i * 0.15
+      });
+      const ring = new THREE.Mesh(ringGeo, ringMaterial);
+      ring.userData.ringIndex = i;
+      ring.rotation.x = Math.PI / 2 + (i % 2 === 0 ? 0 : Math.PI / 4);
+      ring.rotation.y = (i / 4) * Math.PI / 2;
+      this.group.add(ring);
+    }
+
+    // Center sphere
+    const sphereGeo = new THREE.SphereGeometry(0.2 * this.config.scale, 16, 16);
+    const sphereMaterial = new THREE.MeshBasicMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.8
+    });
+    const sphere = new THREE.Mesh(sphereGeo, sphereMaterial);
+    sphere.userData.isCore = true;
+    this.group.add(sphere);
+  }
+
+  createDNAHelix() {
+    const color = new THREE.Color(this.config.color);
+    const points1 = [];
+    const points2 = [];
+    const rungs = [];
+
+    const height = 4 * this.config.scale;
+    const radius = 0.5 * this.config.scale;
+    const turns = 2;
+    const segments = 100;
+
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const y = (t - 0.5) * height;
+      const angle = t * turns * Math.PI * 2;
+
+      points1.push(new THREE.Vector3(
+        Math.cos(angle) * radius,
+        y,
+        Math.sin(angle) * radius
+      ));
+
+      points2.push(new THREE.Vector3(
+        Math.cos(angle + Math.PI) * radius,
+        y,
+        Math.sin(angle + Math.PI) * radius
+      ));
+
+      // Add rungs every 10 segments
+      if (i % 10 === 0 && i > 0 && i < segments) {
+        rungs.push({
+          start: points1[points1.length - 1].clone(),
+          end: points2[points2.length - 1].clone()
+        });
+      }
+    }
+
+    // Create helix strands as tubes
+    const curve1 = new THREE.CatmullRomCurve3(points1);
+    const curve2 = new THREE.CatmullRomCurve3(points2);
+
+    const tubeGeo1 = new THREE.TubeGeometry(curve1, segments, 0.05 * this.config.scale, 8, false);
+    const tubeGeo2 = new THREE.TubeGeometry(curve2, segments, 0.05 * this.config.scale, 8, false);
+
+    const tubeMaterial = new THREE.MeshBasicMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.9
+    });
+
+    const tube1 = new THREE.Mesh(tubeGeo1, tubeMaterial);
+    const tube2 = new THREE.Mesh(tubeGeo2, tubeMaterial.clone());
+    this.group.add(tube1);
+    this.group.add(tube2);
+
+    // Add rungs
+    rungs.forEach((rung, index) => {
+      const rungGeo = new THREE.CylinderGeometry(
+        0.02 * this.config.scale,
+        0.02 * this.config.scale,
+        rung.start.distanceTo(rung.end),
+        8
+      );
+      const rungMaterial = new THREE.MeshBasicMaterial({
+        color: color.clone().multiplyScalar(0.7),
+        transparent: true,
+        opacity: 0.7
+      });
+      const rungMesh = new THREE.Mesh(rungGeo, rungMaterial);
+
+      const midpoint = rung.start.clone().add(rung.end).multiplyScalar(0.5);
+      rungMesh.position.copy(midpoint);
+      rungMesh.lookAt(rung.end);
+      rungMesh.rotateX(Math.PI / 2);
+      rungMesh.userData.rungIndex = index;
+      this.group.add(rungMesh);
+    });
+  }
+
+  createMobiusStrip() {
+    const color = new THREE.Color(this.config.color);
+
+    // Create Mobius strip geometry
+    const geometry = new THREE.BufferGeometry();
+    const positions = [];
+    const normals = [];
+    const uvs = [];
+    const indices = [];
+
+    const radius = 1 * this.config.scale;
+    const width = 0.4 * this.config.scale;
+    const segments = 100;
+    const segmentsWidth = 10;
+
+    for (let i = 0; i <= segments; i++) {
+      const u = (i / segments) * Math.PI * 2;
+
+      for (let j = 0; j <= segmentsWidth; j++) {
+        const v = (j / segmentsWidth - 0.5) * width;
+
+        const x = (radius + v * Math.cos(u / 2)) * Math.cos(u);
+        const y = (radius + v * Math.cos(u / 2)) * Math.sin(u);
+        const z = v * Math.sin(u / 2);
+
+        positions.push(x, y, z);
+
+        // Approximate normal
+        const nx = Math.cos(u) * Math.cos(u / 2);
+        const ny = Math.sin(u) * Math.cos(u / 2);
+        const nz = Math.sin(u / 2);
+        normals.push(nx, ny, nz);
+
+        uvs.push(i / segments, j / segmentsWidth);
+      }
+    }
+
+    // Create indices
+    for (let i = 0; i < segments; i++) {
+      for (let j = 0; j < segmentsWidth; j++) {
+        const a = i * (segmentsWidth + 1) + j;
+        const b = a + segmentsWidth + 1;
+        const c = a + 1;
+        const d = b + 1;
+
+        indices.push(a, b, c);
+        indices.push(b, d, c);
+      }
+    }
+
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+
+    const material = this.createMaterial(color);
+    material.side = THREE.DoubleSide;
+
+    const mesh = new THREE.Mesh(geometry, material);
+    this.group.add(mesh);
+
+    // Add edge glow
+    const edges = new THREE.EdgesGeometry(geometry, 30);
+    this.createGlowingEdges(edges, color, 1);
+  }
+
+  createGlowingEdges(edgesGeometry, color, scale) {
+    // Create tube geometry along edges for volumetric look
+    const positions = edgesGeometry.attributes.position.array;
+
+    // Line-based glow (multiple layers for thickness effect)
+    for (let layer = 0; layer < 3; layer++) {
+      const lineMaterial = new THREE.LineBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: 0.6 - layer * 0.15,
+        linewidth: 1,
+        blending: THREE.AdditiveBlending
+      });
+
+      const lineGeometry = edgesGeometry.clone();
+      const lines = new THREE.LineSegments(lineGeometry, lineMaterial);
+      lines.scale.setScalar(1 + layer * 0.02);
+      lines.userData.edgeLayer = layer;
+      this.group.add(lines);
+    }
+  }
+
+  createMaterial(color) {
+    switch (this.config.materialStyle) {
+      case 'glass':
+        return new THREE.MeshPhysicalMaterial({
+          color: color,
+          transparent: true,
+          opacity: 0.3,
+          roughness: 0.1,
+          metalness: 0.1,
+          transmission: 0.9,
+          thickness: 0.5
+        });
+
+      case 'holographic':
+        return new THREE.MeshPhysicalMaterial({
+          color: color,
+          transparent: true,
+          opacity: 0.4,
+          roughness: 0.2,
+          metalness: 0.8,
+          iridescence: 1,
+          iridescenceIOR: 1.5,
+          sheen: 1,
+          sheenColor: color
+        });
+
+      case 'solid':
+        return new THREE.MeshBasicMaterial({
+          color: color,
+          transparent: true,
+          opacity: 0.7
+        });
+
+      default:
+        return new THREE.MeshBasicMaterial({
+          color: color,
+          transparent: true,
+          opacity: 0.5
+        });
+    }
+  }
+
+  getBoundingRadius() {
+    // Return approximate bounding radius based on structure type and scale
+    const baseScale = this.config.scale || 1;
+    const pulse = 1 + (this.config.pulseIntensity || 0.1);
+    const typeMultipliers = {
+      'icosahedron': 1.5,
+      'torus': 1.3,
+      'rings': 2.2,
+      'helix': 2.5,
+      'mobius': 1.2
+    };
+    const multiplier = typeMultipliers[this.config.type] || 1.5;
+    return baseScale * multiplier * pulse;
+  }
+
+  getPosition() {
+    return this.group.position;
+  }
+
+  update(deltaTime, timeScale) {
+    this.time += deltaTime * timeScale;
+
+    // Rotation
+    this.group.rotation.x += this.config.rotationSpeed.x * deltaTime * timeScale;
+    this.group.rotation.y += this.config.rotationSpeed.y * deltaTime * timeScale;
+    this.group.rotation.z += this.config.rotationSpeed.z * deltaTime * timeScale;
+
+    // Pulse/breathing animation
+    const pulse = 1 + Math.sin(this.time * 2) * this.config.pulseIntensity;
+    this.group.scale.setScalar(pulse);
+
+    // Update children with special behaviors
+    this.group.children.forEach((child, index) => {
+      // Inner structure counter-rotation
+      if (child.userData.isInner) {
+        child.rotation.y -= this.config.rotationSpeed.y * deltaTime * timeScale * 0.5;
+      }
+
+      // Core pulse
+      if (child.userData.isCore) {
+        const corePulse = 1 + Math.sin(this.time * 4) * 0.2;
+        child.scale.setScalar(corePulse);
+      }
+
+      // Ring animations
+      if (child.userData.ringIndex !== undefined) {
+        const ringOffset = child.userData.ringIndex * 0.5;
+        child.rotation.z += (0.5 + ringOffset * 0.2) * deltaTime * timeScale;
+      }
+
+      // Torus inner rotation
+      if (child.userData.rotationOffset !== undefined) {
+        child.rotation.x += (1 + child.userData.rotationOffset * 0.3) * deltaTime * timeScale;
+      }
+
+      // Energy traveling along edges
+      if (child.userData.edgeLayer !== undefined) {
+        const energyPulse = Math.sin(this.time * 3 + this.energyOffset + child.userData.edgeLayer) * 0.3 + 0.7;
+        child.material.opacity = (0.6 - child.userData.edgeLayer * 0.15) * energyPulse;
+      }
+
+      // DNA rung pulse
+      if (child.userData.rungIndex !== undefined) {
+        const rungPulse = Math.sin(this.time * 5 + child.userData.rungIndex * 0.5) * 0.3 + 0.7;
+        child.material.opacity = 0.7 * rungPulse;
+      }
+    });
+  }
+
+  setColor(color) {
+    this.config.color = color;
+    const threeColor = new THREE.Color(color);
+
+    this.group.children.forEach(child => {
+      if (child.material) {
+        if (child.material.color) {
+          child.material.color.set(threeColor);
+        }
+        if (child.material.sheenColor) {
+          child.material.sheenColor.set(threeColor);
+        }
+      }
+    });
+  }
+
+  dispose() {
+    this.group.children.forEach(child => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    });
+    this.scene.remove(this.group);
+  }
+}
+
+// ============================================================================
+// LIGHT RIBBON CLASS
+// ============================================================================
+class LightRibbon {
+  constructor(scene, config) {
+    this.scene = scene;
+    this.config = {
+      type: 'helix',
+      position: new THREE.Vector3(0, 0, 0),
+      animationSpeed: 1,
+      thickness: 0.1,
+      glowIntensity: 1,
+      color: '#00ffaa',
+      trailFade: 2,
+      ...config
+    };
+
+    this.time = Math.random() * 100;
+    this.group = new THREE.Group();
+    this.group.position.copy(this.config.position);
+
+    this.createRibbon();
+    this.scene.add(this.group);
+  }
+
+  createRibbon() {
+    // Clear existing
+    while (this.group.children.length) {
+      const child = this.group.children[0];
+      this.group.remove(child);
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    }
+
+    const points = this.generateCurvePoints();
+    this.curve = new THREE.CatmullRomCurve3(points);
+
+    // Main ribbon tube
+    const tubeGeometry = new THREE.TubeGeometry(
+      this.curve,
+      200,
+      this.config.thickness,
+      8,
+      false
+    );
+
+    const color = new THREE.Color(this.config.color);
+
+    // Create gradient material with glow
+    const tubeMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        color: { value: color },
+        time: { value: 0 },
+        glowIntensity: { value: this.config.glowIntensity }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vNormal;
+        varying vec3 vViewPosition;
+
+        void main() {
+          vUv = uv;
+          vNormal = normalize(normalMatrix * normal);
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          vViewPosition = -mvPosition.xyz;
+          gl_Position = projectionMatrix * mvPosition;
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 color;
+        uniform float time;
+        uniform float glowIntensity;
+
+        varying vec2 vUv;
+        varying vec3 vNormal;
+        varying vec3 vViewPosition;
+
+        void main() {
+          vec3 viewDir = normalize(vViewPosition);
+          float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 2.0);
+
+          // Flowing energy effect
+          float flow = sin(vUv.x * 20.0 - time * 3.0) * 0.5 + 0.5;
+          float pulse = sin(time * 2.0) * 0.2 + 0.8;
+
+          vec3 finalColor = color * (1.0 + fresnel * glowIntensity) * (0.5 + flow * 0.5) * pulse;
+          float alpha = (0.6 + fresnel * 0.4) * (0.3 + flow * 0.7);
+
+          gl_FragColor = vec4(finalColor, alpha);
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+
+    const tube = new THREE.Mesh(tubeGeometry, tubeMaterial);
+    tube.userData.isMainRibbon = true;
+    this.group.add(tube);
+
+    // Glow layers
+    for (let i = 0; i < 2; i++) {
+      const glowGeometry = new THREE.TubeGeometry(
+        this.curve,
+        100,
+        this.config.thickness * (2 + i),
+        8,
+        false
+      );
+
+      const glowMaterial = new THREE.MeshBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: 0.1 - i * 0.03,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      });
+
+      const glow = new THREE.Mesh(glowGeometry, glowMaterial);
+      glow.userData.glowLayer = i;
+      this.group.add(glow);
+    }
+  }
+
+  generateCurvePoints() {
+    const points = [];
+    const segments = 100;
+
+    switch (this.config.type) {
+      case 'helix':
+        for (let i = 0; i <= segments; i++) {
+          const t = i / segments;
+          const angle = t * Math.PI * 6;
+          const radius = 2 + Math.sin(t * Math.PI * 2) * 0.5;
+          points.push(new THREE.Vector3(
+            Math.cos(angle) * radius,
+            (t - 0.5) * 6,
+            Math.sin(angle) * radius
+          ));
+        }
+        break;
+
+      case 'lissajous':
+        for (let i = 0; i <= segments; i++) {
+          const t = (i / segments) * Math.PI * 2;
+          points.push(new THREE.Vector3(
+            Math.sin(3 * t) * 2,
+            Math.sin(2 * t) * 2,
+            Math.sin(5 * t) * 2
+          ));
+        }
+        break;
+
+      case 'toroidal':
+        for (let i = 0; i <= segments; i++) {
+          const t = (i / segments) * Math.PI * 2;
+          const p = 3, q = 2;
+          const r = 0.5 * (2 + Math.cos(q * t));
+          points.push(new THREE.Vector3(
+            r * Math.cos(p * t) * 1.5,
+            r * Math.sin(p * t) * 1.5,
+            -Math.sin(q * t) * 1.5
+          ));
+        }
+        break;
+
+      case 'spiral':
+        for (let i = 0; i <= segments; i++) {
+          const t = i / segments;
+          const angle = t * Math.PI * 8;
+          const radius = 0.5 + t * 2;
+          points.push(new THREE.Vector3(
+            Math.cos(angle) * radius,
+            (t - 0.5) * 4,
+            Math.sin(angle) * radius
+          ));
+        }
+        break;
+
+      default:
+        // Default helix
+        for (let i = 0; i <= segments; i++) {
+          const t = i / segments;
+          const angle = t * Math.PI * 4;
+          points.push(new THREE.Vector3(
+            Math.cos(angle) * 2,
+            (t - 0.5) * 4,
+            Math.sin(angle) * 2
+          ));
+        }
+    }
+
+    return points;
+  }
+
+  update(deltaTime, timeScale) {
+    this.time += deltaTime * timeScale * this.config.animationSpeed;
+
+    // Update shader uniforms
+    this.group.children.forEach(child => {
+      if (child.userData.isMainRibbon && child.material.uniforms) {
+        child.material.uniforms.time.value = this.time;
+      }
+
+      // Animate glow layers
+      if (child.userData.glowLayer !== undefined) {
+        const pulse = Math.sin(this.time * 2 + child.userData.glowLayer) * 0.02 + 0.08;
+        child.material.opacity = pulse;
+      }
+    });
+
+    // Slow rotation
+    this.group.rotation.y += 0.1 * deltaTime * timeScale;
+  }
+
+  setColor(color) {
+    this.config.color = color;
+    const threeColor = new THREE.Color(color);
+
+    this.group.children.forEach(child => {
+      if (child.material.uniforms && child.material.uniforms.color) {
+        child.material.uniforms.color.value = threeColor;
+      } else if (child.material.color) {
+        child.material.color.set(threeColor);
+      }
+    });
+  }
+
+  dispose() {
+    this.group.children.forEach(child => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    });
+    this.scene.remove(this.group);
+  }
+}
+
+// ============================================================================
+// BACKGROUND MANAGER
+// ============================================================================
+class BackgroundManager {
+  constructor(scene) {
+    this.scene = scene;
+    this.mesh = null;
+    this.style = 'gradient';
+    this.colors = ['#0a0a1a', '#051515', '#0a1a1a'];
+
+    this.createBackground();
+  }
+
+  createBackground() {
+    if (this.mesh) {
+      this.scene.remove(this.mesh);
+      this.mesh.geometry.dispose();
+      this.mesh.material.dispose();
+    }
+
+    const geometry = new THREE.SphereGeometry(100, 32, 32);
+
+    let material;
+
+    switch (this.style) {
+      case 'solid':
+        material = new THREE.MeshBasicMaterial({
+          color: 0x000000,
+          side: THREE.BackSide
+        });
+        break;
+
+      case 'gradient':
+        material = new THREE.ShaderMaterial({
+          uniforms: {
+            color1: { value: new THREE.Color(this.colors[0]) },
+            color2: { value: new THREE.Color(this.colors[1]) },
+            color3: { value: new THREE.Color(this.colors[2]) },
+            time: { value: 0 }
+          },
+          vertexShader: `
+            varying vec3 vPosition;
+            void main() {
+              vPosition = position;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `,
+          fragmentShader: `
+            uniform vec3 color1;
+            uniform vec3 color2;
+            uniform vec3 color3;
+            uniform float time;
+            varying vec3 vPosition;
+
+            void main() {
+              float y = (vPosition.y + 100.0) / 200.0;
+              y = y + sin(time * 0.1 + vPosition.x * 0.02) * 0.05;
+
+              vec3 color;
+              if (y < 0.5) {
+                color = mix(color1, color2, y * 2.0);
+              } else {
+                color = mix(color2, color3, (y - 0.5) * 2.0);
+              }
+
+              gl_FragColor = vec4(color, 1.0);
+            }
+          `,
+          side: THREE.BackSide
+        });
+        break;
+
+      case 'nebula':
+        material = new THREE.ShaderMaterial({
+          uniforms: {
+            color1: { value: new THREE.Color(this.colors[0]) },
+            color2: { value: new THREE.Color(this.colors[1]) },
+            color3: { value: new THREE.Color(this.colors[2] || this.colors[1]) },
+            time: { value: 0 }
+          },
+          vertexShader: `
+            varying vec3 vPosition;
+            varying vec2 vUv;
+            void main() {
+              vPosition = position;
+              vUv = uv;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `,
+          fragmentShader: `
+            uniform vec3 color1;
+            uniform vec3 color2;
+            uniform vec3 color3;
+            uniform float time;
+            varying vec3 vPosition;
+            varying vec2 vUv;
+
+            // Simplex noise functions
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+            vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+            float snoise(vec3 v) {
+              const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+              const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+
+              vec3 i  = floor(v + dot(v, C.yyy));
+              vec3 x0 = v - i + dot(i, C.xxx);
+
+              vec3 g = step(x0.yzx, x0.xyz);
+              vec3 l = 1.0 - g;
+              vec3 i1 = min(g.xyz, l.zxy);
+              vec3 i2 = max(g.xyz, l.zxy);
+
+              vec3 x1 = x0 - i1 + C.xxx;
+              vec3 x2 = x0 - i2 + C.yyy;
+              vec3 x3 = x0 - D.yyy;
+
+              i = mod289(i);
+              vec4 p = permute(permute(permute(
+                        i.z + vec4(0.0, i1.z, i2.z, 1.0))
+                      + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+                      + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+
+              float n_ = 0.142857142857;
+              vec3 ns = n_ * D.wyz - D.xzx;
+
+              vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+
+              vec4 x_ = floor(j * ns.z);
+              vec4 y_ = floor(j - 7.0 * x_);
+
+              vec4 x = x_ *ns.x + ns.yyyy;
+              vec4 y = y_ *ns.x + ns.yyyy;
+              vec4 h = 1.0 - abs(x) - abs(y);
+
+              vec4 b0 = vec4(x.xy, y.xy);
+              vec4 b1 = vec4(x.zw, y.zw);
+
+              vec4 s0 = floor(b0)*2.0 + 1.0;
+              vec4 s1 = floor(b1)*2.0 + 1.0;
+              vec4 sh = -step(h, vec4(0.0));
+
+              vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+              vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+
+              vec3 p0 = vec3(a0.xy, h.x);
+              vec3 p1 = vec3(a0.zw, h.y);
+              vec3 p2 = vec3(a1.xy, h.z);
+              vec3 p3 = vec3(a1.zw, h.w);
+
+              vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+              p0 *= norm.x;
+              p1 *= norm.y;
+              p2 *= norm.z;
+              p3 *= norm.w;
+
+              vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+              m = m * m;
+              return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+            }
+
+            void main() {
+              vec3 pos = vPosition * 0.01;
+
+              // Multi-octave noise for rich nebula texture
+              float n1 = snoise(pos + time * 0.02) * 0.5 + 0.5;
+              float n2 = snoise(pos * 2.0 + time * 0.03) * 0.25 + 0.25;
+              float n3 = snoise(pos * 4.0 - time * 0.01) * 0.125 + 0.125;
+              float n4 = snoise(pos * 8.0 + time * 0.05) * 0.0625;
+
+              float noise = n1 + n2 + n3 + n4;
+              noise = pow(noise, 1.5); // Contrast boost
+
+              // Three-way color blend for richer gradients
+              vec3 color;
+              if (noise < 0.5) {
+                color = mix(color1, color2, noise * 2.0);
+              } else {
+                color = mix(color2, color3, (noise - 0.5) * 2.0);
+              }
+
+              // Add subtle animated stars
+              float starNoise = snoise(pos * 100.0 + time * 0.1);
+              float stars = pow(max(starNoise, 0.0), 20.0) * 0.5;
+              color += vec3(stars);
+
+              // Add subtle color variation based on position
+              float colorVariation = snoise(pos * 0.5 + time * 0.005) * 0.1;
+              color += colorVariation;
+
+              // Vignette darkening at edges
+              float vignette = 1.0 - length(vPosition.xy) * 0.003;
+              vignette = clamp(vignette, 0.5, 1.0);
+              color *= vignette;
+
+              gl_FragColor = vec4(color, 1.0);
+            }
+          `,
+          side: THREE.BackSide
+        });
+        break;
+
+      default:
+        material = new THREE.MeshBasicMaterial({
+          color: 0x050510,
+          side: THREE.BackSide
+        });
+    }
+
+    this.mesh = new THREE.Mesh(geometry, material);
+    this.scene.add(this.mesh);
+  }
+
+  setStyle(style) {
+    this.style = style;
+    this.createBackground();
+  }
+
+  setColors(colors) {
+    this.colors = colors;
+    if (this.mesh && this.mesh.material.uniforms) {
+      if (this.mesh.material.uniforms.color1) {
+        this.mesh.material.uniforms.color1.value = new THREE.Color(colors[0]);
+      }
+      if (this.mesh.material.uniforms.color2) {
+        this.mesh.material.uniforms.color2.value = new THREE.Color(colors[1]);
+      }
+      if (this.mesh.material.uniforms.color3) {
+        this.mesh.material.uniforms.color3.value = new THREE.Color(colors[2]);
+      }
+    }
+  }
+
+  update(time) {
+    if (this.mesh && this.mesh.material.uniforms && this.mesh.material.uniforms.time) {
+      this.mesh.material.uniforms.time.value = time;
+    }
+  }
+
+  dispose() {
+    if (this.mesh) {
+      this.scene.remove(this.mesh);
+      this.mesh.geometry.dispose();
+      this.mesh.material.dispose();
+    }
+  }
+}
+
+// ============================================================================
+// AUDIO ANALYZER CLASS
+// ============================================================================
+class AudioAnalyzer {
+  constructor() {
+    this.audioContext = null;
+    this.analyser = null;
+    this.dataArray = null;
+    this.source = null;
+    this.active = false;
+    this.smoothing = 0.8;
+  }
+  
+  async connectMicrophone() {
+    try {
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // Create audio context if needed
+      if (!this.audioContext) {
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      
+      // Create analyser
+      this.analyser = this.audioContext.createAnalyser();
+      this.analyser.fftSize = 256;
+      this.analyser.smoothingTimeConstant = this.smoothing;
+      this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+      
+      // Connect source
+      this.source = this.audioContext.createMediaStreamSource(stream);
+      this.source.connect(this.analyser);
+      
+      this.active = true;
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to access microphone:', error);
+      return { success: false, error: error.message };
+    }
+  }
+  
+  connectAudioElement(audioElement) {
+    if (!this.audioContext) {
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    
+    this.analyser = this.audioContext.createAnalyser();
+    this.analyser.fftSize = 256;
+    this.analyser.smoothingTimeConstant = this.smoothing;
+    this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+    
+    this.source = this.audioContext.createMediaElementSource(audioElement);
+    this.source.connect(this.analyser);
+    this.analyser.connect(this.audioContext.destination);
+    
+    this.active = true;
+  }
+  
+  getFrequencyData() {
+    if (!this.active || !this.analyser) {
+      return { bass: 0, mid: 0, high: 0, overall: 0 };
+    }
+    
+    this.analyser.getByteFrequencyData(this.dataArray);
+    
+    return {
+      bass: this.getRange(0, 10) / 255,       // 0-300Hz
+      mid: this.getRange(10, 50) / 255,       // 300-1500Hz
+      high: this.getRange(50, 128) / 255,     // 1500Hz+
+      overall: this.getOverallVolume() / 255
+    };
+  }
+  
+  getRange(start, end) {
+    let sum = 0;
+    for (let i = start; i < end && i < this.dataArray.length; i++) {
+      sum += this.dataArray[i];
+    }
+    return sum / (end - start);
+  }
+  
+  getOverallVolume() {
+    let sum = 0;
+    for (let i = 0; i < this.dataArray.length; i++) {
+      sum += this.dataArray[i];
+    }
+    return sum / this.dataArray.length;
+  }
+  
+  detectBeat(threshold = 0.7) {
+    const bass = this.getRange(0, 10) / 255;
+    return bass > threshold;
+  }
+  
+  disconnect() {
+    if (this.source) {
+      this.source.disconnect();
+    }
+    if (this.audioContext) {
+      this.audioContext.close();
+    }
+    this.active = false;
+  }
+  
+  setSmoothing(value) {
+    this.smoothing = value;
+    if (this.analyser) {
+      this.analyser.smoothingTimeConstant = value;
+    }
+  }
+}
+
+// ============================================================================
+// MAIN APP COMPONENT
+// ============================================================================
+function LuminousFlow() {
+  const containerRef = useRef(null);
+  const sceneRef = useRef(null);
+  const rendererRef = useRef(null);
+  const composerRef = useRef(null);
+  const cameraRef = useRef(null);
+  const controlsRef = useRef(null);
+  const clockRef = useRef(new THREE.Clock());
+  const animationIdRef = useRef(null);
+
+  // GPU Particle System (replaces emittersRef)
+  const gpuParticlesRef = useRef(null);
+  const waveGridRef = useRef(null);
+  const structuresRef = useRef([]);
+  const ribbonsRef = useRef([]);
+  const backgroundRef = useRef(null);
+  const filmGrainPassRef = useRef(null);
+  const chromaticAberrationPassRef = useRef(null);
+  const vignettePassRef = useRef(null);
+  const fxaaPassRef = useRef(null);
+  const bloomPassRef = useRef(null);
+  const bokehPassRef = useRef(null);
+  const afterimagePassRef = useRef(null);
+
+  // Camera animation refs
+  const cameraAnimRef = useRef({
+    active: false,
+    startPos: new THREE.Vector3(),
+    endPos: new THREE.Vector3(),
+    startTarget: new THREE.Vector3(),
+    endTarget: new THREE.Vector3(),
+    startFov: 75,
+    endFov: 75,
+    progress: 0,
+    duration: 1.5,
+    tempVec: new THREE.Vector3()
+  });
+  const cameraShakeRef = useRef({ intensity: 0, decay: 0.9 });
+
+  // Transition system (Phase 5)
+  const transitionRef = useRef({
+    active: false,
+    params: {},
+    targets: {},
+    progress: 0,
+    duration: 1.0
+  });
+  const paletteTransitionRef = useRef({
+    active: false,
+    currentColors: null,
+    targetColors: null,
+    progress: 0,
+    duration: 1.0
+  });
+
+  // Shockwave and interaction refs
+  const shockwaveManagerRef = useRef(null);
+  const mouseAttractorRef = useRef(null);
+  const raycasterRef = useRef(new THREE.Raycaster());
+  const mouseRef = useRef(new THREE.Vector2());
+  const lastPulseTimeRef = useRef(0);
+  
+  // Interactive structure refs
+  const selectedStructureRef = useRef(null);
+  const isDraggingStructureRef = useRef(false);
+  const dragOffsetRef = useRef(new THREE.Vector3());
+  
+  // Touch gesture refs
+  const touchStartRef = useRef(null);
+  const lastTouchTimeRef = useRef(0);
+  const touchGestureRef = useRef(null);
+  
+  // Quality management refs
+  const qualityManagerRef = useRef(null);
+  
+  // Audio reactivity refs
+  const audioAnalyzerRef = useRef(null);
+  const audioEnabledRef = useRef(false);
+  const lastBeatTimeRef = useRef(0);
+  
+  // Recording refs
+  const mediaRecorderRef = useRef(null);
+  const recordedChunksRef = useRef([]);
+  
+  // Refs for state values accessible in animation loop
+  const mouseFollowRef = useRef(true);
+  const autoPulseRef = useRef(true);
+  const pulseIntervalRef = useRef(4);
+
+  // UI visibility and app state
+  const [uiVisible, setUiVisible] = useState(true);
+  const [paused, setPaused] = useState(false);
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showPresets, setShowPresets] = useState(false);
+  const [showPerfOverlay, setShowPerfOverlay] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    try {
+      return localStorage.getItem('luminousflow_onboarded') !== 'true';
+    } catch (e) {
+      return true; // Show by default if localStorage fails
+    }
+  });
+  const [onboardingStep, setOnboardingStep] = useState(1);
+  const [toasts, setToasts] = useState([]);
+  const pausedRef = useRef(false);
+
+  // State
+  const [timeScale, setTimeScale] = useState(1);
+  const [gravity, setGravity] = useState(1);
+  const [gravityDirection, setGravityDirection] = useState('down');
+  const [turbulence, setTurbulence] = useState(0.5);
+  const [bloomIntensity, setBloomIntensity] = useState(1.5);
+  const [backgroundStyle, setBackgroundStyle] = useState('gradient');
+  const [colorPalette, setColorPalette] = useState('Northern Lights');
+  const [autoRotate, setAutoRotate] = useState(true);
+  const [autoRotateSpeed, setAutoRotateSpeed] = useState(0.5);
+  const [immersionMode, setImmersionMode] = useState(false);
+  const [filmGrain, setFilmGrain] = useState(false);
+  const [chromaticAberration, setChromaticAberration] = useState(true);
+  const [chromaticIntensity, setChromaticIntensity] = useState(0.003);
+  
+  // Interactivity state
+  const [mouseFollow, setMouseFollow] = useState(true);
+  const [autoPulse, setAutoPulse] = useState(true);
+  const [pulseInterval, setPulseInterval] = useState(4);
+  
+  // Wave grid state
+  const [waveGridEnabled, setWaveGridEnabled] = useState(true);
+  const [waveAmplitude, setWaveAmplitude] = useState(1.0);
+  const [waveSpeed, setWaveSpeed] = useState(1.0);
+  
+  // Quality system state
+  const [qualityLevel, setQualityLevel] = useState('high');
+  const [autoQuality, setAutoQuality] = useState(true);
+  const [currentFps, setCurrentFps] = useState(60);
+  const [particleCount, setParticleCount] = useState(65536);
+  
+  // Interactive structure state
+  const [selectedStructureIndex, setSelectedStructureIndex] = useState(null);
+  const [isDraggingStructure, setIsDraggingStructure] = useState(false);
+
+  // Touch support state
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
+
+  // Audio reactivity state
+  const [audioReactivity, setAudioReactivity] = useState(false);
+  const [audioSource, setAudioSource] = useState('none'); // 'none', 'microphone', 'file'
+  const [audioBass, setAudioBass] = useState(0);
+  const [audioMid, setAudioMid] = useState(0);
+  const [audioHigh, setAudioHigh] = useState(0);
+  const [beatThreshold, setBeatThreshold] = useState(0.7);
+  const [audioSensitivity, setAudioSensitivity] = useState(1.5);
+
+  // Screenshot/recording state
+  const [isRecording, setIsRecording] = useState(false);
+
+  // GPU Particle parameters (Phase 4)
+  const [particleSize, setParticleSize] = useState(2.0);
+  const [particleGlow, setParticleGlow] = useState(1.5);
+  const [particleSpeedLimit, setParticleSpeedLimit] = useState(8.0);
+  const [particleDamping, setParticleDamping] = useState(0.98);
+  const [curlNoiseScale, setCurlNoiseScale] = useState(0.5);
+  const [curlNoiseSpeed, setCurlNoiseSpeed] = useState(0.2);
+  const [spawnRadius, setSpawnRadius] = useState(8.0);
+
+  // Wave Grid parameters (Phase 4)
+  const [waveFrequency, setWaveFrequency] = useState(0.5);
+  const [waveOpacity, setWaveOpacity] = useState(0.5);
+  const [waveParticleSize, setWaveParticleSize] = useState(2.5);
+
+  // Post-processing parameters (Phase 4)
+  const [bloomRadius, setBloomRadius] = useState(0.8);
+  const [bloomThreshold, setBloomThreshold] = useState(0.0);
+  const [filmGrainIntensity, setFilmGrainIntensity] = useState(0.03);
+  const [vignetteIntensity, setVignetteIntensity] = useState(1.2);
+
+  // Particle trails (Phase 5)
+  const [trailsEnabled, setTrailsEnabled] = useState(false);
+  const [trailLength, setTrailLength] = useState(0.85);
+
+  const [structures, setStructures] = useState([]);
+  const [ribbons, setRibbons] = useState([]);
+  
+  // Attractor management state
+  const [attractors, setAttractors] = useState([]);
+  const [velocityColorMode, setVelocityColorMode] = useState('speed'); // 'speed', 'direction', 'acceleration'
+
+  // Simulation mode state
+  const [simulationMode, setSimulationMode] = useState('flow'); // 'flow', 'boids', 'nbody'
+
+  // Boids parameters
+  const [boidsSeparation, setBoidsSeparation] = useState(1.5);
+  const [boidsAlignment, setBoidsAlignment] = useState(1.0);
+  const [boidsCohesion, setBoidsCohesion] = useState(1.0);
+  const [boidsNeighborRadius, setBoidsNeighborRadius] = useState(2.0);
+  const [boidsMaxSpeed, setBoidsMaxSpeed] = useState(4.0);
+
+  // N-Body parameters
+  const [nbodyGravConstant, setNbodyGravConstant] = useState(0.5);
+  const [nbodySoftening, setNbodySoftening] = useState(0.5);
+  const [nbodyDamping, setNbodyDamping] = useState(0.999);
+
+  // Camera state
+  const [dofEnabled, setDofEnabled] = useState(false);
+  const [dofFocus, setDofFocus] = useState(8.0);
+  const [dofAperture, setDofAperture] = useState(0.025);
+
+  const [expandedSections, setExpandedSections] = useState(() => {
+    try {
+      const saved = localStorage.getItem('luminousflow_expandedSections');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.warn('Failed to load expanded sections from localStorage:', e);
+    }
+    return {
+      global: true,
+      emitters: true,
+      structures: true,
+      ribbons: false,
+      camera: false,
+      audio: false,
+      media: false
+    };
+  });
+
+  const [expandedItems, setExpandedItems] = useState({});
+
+  // Scene save/load state
+  const [sceneName, setSceneName] = useState('');
+  const [savedScenes, setSavedScenes] = useState(() => {
+    try {
+      const saved = localStorage.getItem('luminousflow_scenes');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.warn('Failed to load saved scenes from localStorage:', e);
+    }
+    return {};
+  });
+  const [selectedScene, setSelectedScene] = useState('');
+
+  // Detect touch device on mount
+  useEffect(() => {
+    const hasTouchSupport = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    setIsTouchDevice(hasTouchSupport);
+  }, []);
+
+  // Initialize Three.js scene
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    // Scene
+    const scene = new THREE.Scene();
+    sceneRef.current = scene;
+
+    // Camera
+    const camera = new THREE.PerspectiveCamera(
+      60,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
+    camera.position.set(0, 2, 8);
+    cameraRef.current = camera;
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true
+    });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
+    containerRef.current.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
+
+    // Controls
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.5;
+    controls.minDistance = 2;
+    controls.maxDistance = 50;
+    controlsRef.current = controls;
+
+    // Post-processing
+    const composer = new EffectComposer(renderer);
+
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+
+    // Afterimage pass for particle trails - right after render
+    const afterimagePass = new AfterimagePass(0.85);
+    afterimagePass.enabled = false; // Disabled by default
+    composer.addPass(afterimagePass);
+    afterimagePassRef.current = afterimagePass;
+
+    // Bokeh (Depth of Field) pass - after render, before bloom
+    const bokehPass = new BokehPass(scene, camera, {
+      focus: 8.0,
+      aperture: 0.025,
+      maxblur: 0.01
+    });
+    bokehPass.enabled = false; // Disabled by default
+    composer.addPass(bokehPass);
+    bokehPassRef.current = bokehPass;
+
+    const bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      1.5,
+      0.4,
+      0.85
+    );
+    bloomPass.threshold = 0;
+    bloomPass.strength = 1.5;
+    bloomPass.radius = 0.8;
+    composer.addPass(bloomPass);
+    bloomPassRef.current = bloomPass;
+    
+    // Chromatic aberration pass - after bloom
+    const chromaticAberrationPass = new ShaderPass(ChromaticAberrationShader);
+    chromaticAberrationPass.uniforms.uIntensity.value = 0.003;
+    chromaticAberrationPass.enabled = true;
+    composer.addPass(chromaticAberrationPass);
+    chromaticAberrationPassRef.current = chromaticAberrationPass;
+
+    const vignettePass = new ShaderPass(VignetteShader);
+    vignettePass.uniforms.offset.value = 0.95;
+    vignettePass.uniforms.darkness.value = 1.2;
+    composer.addPass(vignettePass);
+    vignettePassRef.current = vignettePass;
+
+    const filmGrainPass = new ShaderPass(FilmGrainShader);
+    filmGrainPass.uniforms.intensity.value = 0.03;
+    filmGrainPass.enabled = false;
+    composer.addPass(filmGrainPass);
+    filmGrainPassRef.current = filmGrainPass;
+    
+    // FXAA anti-aliasing pass - last pass
+    const fxaaPass = new ShaderPass(FXAAShader);
+    fxaaPass.uniforms['resolution'].value.set(
+      1 / window.innerWidth,
+      1 / window.innerHeight
+    );
+    composer.addPass(fxaaPass);
+    fxaaPassRef.current = fxaaPass;
+
+    composerRef.current = composer;
+
+    // Background
+    const bg = new BackgroundManager(scene);
+    backgroundRef.current = bg;
+
+    // Ambient light for physical materials
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+    scene.add(ambientLight);
+
+    // Fog for depth
+    scene.fog = new THREE.FogExp2(0x000000, 0.02);
+
+    // Initialize GPU Particle System
+    const gpuParticles = new GPUParticleSystem(renderer, scene, 256); // 256² = 65,536 particles
+    gpuParticlesRef.current = gpuParticles;
+    
+    // Initialize Shockwave Manager
+    const shockwaveManager = new ShockwaveManager(5);
+    shockwaveManagerRef.current = shockwaveManager;
+    
+    // Initialize Mouse Attractor
+    const mouseAttractor = new Attractor(new THREE.Vector3(0, 0, 0), 8.0, 'point');
+    mouseAttractorRef.current = mouseAttractor;
+    
+    // Initialize Quality Manager with callback for quality changes
+    const qualityManager = new QualityManager((quality, preset) => {
+      console.log(`Quality changed to: ${quality}`, preset);
+      setQualityLevel(quality);
+      setParticleCount(preset.particleSize * preset.particleSize);
+      
+      // Apply post-processing settings based on preset
+      if (bloomPassRef.current) {
+        bloomPassRef.current.enabled = preset.bloom;
+        if (preset.bloom) {
+          bloomPassRef.current.strength = preset.bloomStrength;
+        }
+      }
+      if (chromaticAberrationPassRef.current) {
+        chromaticAberrationPassRef.current.enabled = preset.chromatic;
+      }
+      if (filmGrainPassRef.current) {
+        filmGrainPassRef.current.enabled = preset.filmGrain;
+      }
+      if (fxaaPassRef.current) {
+        fxaaPassRef.current.enabled = preset.fxaa;
+      }
+    });
+    qualityManagerRef.current = qualityManager;
+    
+    // Initialize Audio Analyzer
+    const audioAnalyzer = new AudioAnalyzer();
+    audioAnalyzerRef.current = audioAnalyzer;
+    
+    // Initialize Wave Grid
+    const palette = COLOR_PALETTES['Northern Lights'];
+    const waveGrid = new WaveGrid(scene, {
+      size: 128,
+      gridScale: 25,
+      waveAmplitude: 1.0,
+      waveFrequency: 0.5,
+      waveSpeed: 1.0,
+      color1: palette.primary,
+      color2: palette.secondary,
+      color3: palette.accent,
+      opacity: 0.5,
+      particleSize: 2.5,
+      yOffset: -6.0
+    });
+    waveGridRef.current = waveGrid;
+
+    // Create default scene
+    createDefaultScene();
+    
+    // Event handlers for interactivity
+    const handleMouseMove = (event) => {
+      // Calculate normalized mouse coordinates
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      
+      // Raycast to find 3D position
+      raycasterRef.current.setFromCamera(mouseRef.current, camera);
+      
+      // Create a plane at z=0 to intersect with
+      const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+      const intersectPoint = new THREE.Vector3();
+      raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+      
+      // Update mouse attractor position
+      if (mouseAttractorRef.current && intersectPoint) {
+        mouseAttractorRef.current.setPosition(intersectPoint);
+      }
+    };
+    
+    const handleClick = (event) => {
+      // Calculate click position in 3D space
+      const rect = renderer.domElement.getBoundingClientRect();
+      const clickMouse = new THREE.Vector2(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      
+      raycasterRef.current.setFromCamera(clickMouse, camera);
+      
+      // Check for structure intersection first
+      const structureObjects = structuresRef.current
+        .map(s => s.group)
+        .filter(g => g && g.visible);
+      
+      const structureIntersects = raycasterRef.current.intersectObjects(structureObjects, true);
+      
+      if (structureIntersects.length > 0 && event.shiftKey) {
+        // Shift+Click on structure - select it
+        const intersectedGroup = structureIntersects[0].object.parent;
+        const structureIndex = structuresRef.current.findIndex(s => s.group === intersectedGroup);
+        
+        if (structureIndex !== -1) {
+          setSelectedStructureIndex(structureIndex);
+          selectedStructureRef.current = structureIndex;
+          showToast(`Selected ${structures[structureIndex]?.type || 'structure'}`, 'info');
+          return;
+        }
+      }
+      
+      // Find intersection with a plane at z=0
+      const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+      const intersectPoint = new THREE.Vector3();
+      raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+      
+      // Trigger shockwave at click position
+      if (shockwaveManagerRef.current && intersectPoint) {
+        shockwaveManagerRef.current.trigger(intersectPoint, 15.0, 2.5, 10.0);
+      }
+    };
+    
+    // Handle mouse down for structure dragging
+    const handleMouseDown = (event) => {
+      if (selectedStructureRef.current !== null) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        
+        raycasterRef.current.setFromCamera(mouse, camera);
+        
+        const structureIndex = selectedStructureRef.current;
+        if (structuresRef.current[structureIndex]) {
+          const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+          const intersectPoint = new THREE.Vector3();
+          raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+          
+          if (intersectPoint) {
+            isDraggingStructureRef.current = true;
+            setIsDraggingStructure(true);
+            
+            const structurePos = structuresRef.current[structureIndex].group.position;
+            dragOffsetRef.current.copy(intersectPoint).sub(structurePos);
+          }
+        }
+      }
+    };
+    
+    // Handle mouse up to stop dragging
+    const handleMouseUp = (event) => {
+      if (isDraggingStructureRef.current) {
+        isDraggingStructureRef.current = false;
+        setIsDraggingStructure(false);
+      }
+    };
+    
+    // Handle mouse move for dragging
+    const handleMouseMoveForDrag = (event) => {
+      if (isDraggingStructureRef.current && selectedStructureRef.current !== null) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        
+        raycasterRef.current.setFromCamera(mouse, camera);
+        
+        const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        const intersectPoint = new THREE.Vector3();
+        raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+        
+        if (intersectPoint && structuresRef.current[selectedStructureRef.current]) {
+          const newPos = intersectPoint.sub(dragOffsetRef.current);
+          structuresRef.current[selectedStructureRef.current].group.position.copy(newPos);
+          
+          // Update state
+          setStructures(prev => prev.map((s, i) =>
+            i === selectedStructureRef.current
+              ? { ...s, position: newPos }
+              : s
+          ));
+        }
+      }
+    };
+    
+    // Touch event handlers
+    const handleTouchStart = (event) => {
+      const touch = event.touches[0];
+      const now = Date.now();
+      
+      touchStartRef.current = {
+        x: touch.clientX,
+        y: touch.clientY,
+        time: now
+      };
+      
+      // Check for double tap
+      if (now - lastTouchTimeRef.current < 300) {
+        // Double tap detected
+        const rect = renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((touch.clientX - rect.left) / rect.width) * 2 - 1,
+          -((touch.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        
+        raycasterRef.current.setFromCamera(mouse, camera);
+        const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        const intersectPoint = new THREE.Vector3();
+        raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+        
+        if (intersectPoint) {
+          // Add structure at double-tap location
+          addStructure();
+          showToast('Structure added', 'success');
+        }
+      }
+      
+      lastTouchTimeRef.current = now;
+      
+      // Handle multi-touch
+      if (event.touches.length === 2) {
+        touchGestureRef.current = {
+          type: 'pinch',
+          startDistance: Math.hypot(
+            event.touches[0].clientX - event.touches[1].clientX,
+            event.touches[0].clientY - event.touches[1].clientY
+          )
+        };
+      } else if (event.touches.length === 3) {
+        touchGestureRef.current = { type: 'three-finger' };
+      }
+    };
+    
+    const handleTouchMove = (event) => {
+      event.preventDefault();
+      
+      if (event.touches.length === 1) {
+        // Single touch - move mouse attractor
+        const touch = event.touches[0];
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouseRef.current.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
+        mouseRef.current.y = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
+        
+        raycasterRef.current.setFromCamera(mouseRef.current, camera);
+        const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        const intersectPoint = new THREE.Vector3();
+        raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+        
+        if (mouseAttractorRef.current && intersectPoint) {
+          mouseAttractorRef.current.setPosition(intersectPoint);
+        }
+      } else if (event.touches.length === 2 && touchGestureRef.current?.type === 'pinch') {
+        // Two-finger pinch - handled by OrbitControls
+      }
+    };
+    
+    const handleTouchEnd = (event) => {
+      if (!touchStartRef.current) return;
+      
+      const duration = Date.now() - touchStartRef.current.time;
+      
+      // Long press detection
+      if (duration > 500 && event.changedTouches.length === 1) {
+        const touch = event.changedTouches[0];
+        const rect = renderer.domElement.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((touch.clientX - rect.left) / rect.width) * 2 - 1,
+          -((touch.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        
+        raycasterRef.current.setFromCamera(mouse, camera);
+        const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        const intersectPoint = new THREE.Vector3();
+        raycasterRef.current.ray.intersectPlane(plane, intersectPoint);
+        
+        if (intersectPoint && shockwaveManagerRef.current) {
+          shockwaveManagerRef.current.trigger(intersectPoint, 15.0, 2.5, 10.0);
+          showToast('Shockwave triggered', 'success');
+        }
+      }
+      
+      // Swipe detection
+      if (touchStartRef.current && event.changedTouches.length === 1) {
+        const touch = event.changedTouches[0];
+        const deltaX = touch.clientX - touchStartRef.current.x;
+        const deltaY = touch.clientY - touchStartRef.current.y;
+        
+        if (Math.abs(deltaX) > 100 && Math.abs(deltaY) < 50 && duration < 300) {
+          // Horizontal swipe
+          const palettes = Object.keys(COLOR_PALETTES);
+          const currentIdx = palettes.indexOf(colorPalette);
+          
+          if (deltaX > 0 && currentIdx > 0) {
+            // Swipe right - previous palette
+            setColorPalette(palettes[currentIdx - 1]);
+            showToast(`Palette: ${palettes[currentIdx - 1]}`, 'success');
+          } else if (deltaX < 0 && currentIdx < palettes.length - 1) {
+            // Swipe left - next palette
+            setColorPalette(palettes[currentIdx + 1]);
+            showToast(`Palette: ${palettes[currentIdx + 1]}`, 'success');
+          }
+        }
+      }
+      
+      // Three-finger swipe to toggle UI
+      if (touchGestureRef.current?.type === 'three-finger' && event.changedTouches.length === 3) {
+        setUiVisible(prev => !prev);
+        showToast(uiVisible ? 'UI hidden' : 'UI visible', 'info');
+      }
+      
+      touchStartRef.current = null;
+      touchGestureRef.current = null;
+    };
+    
+    // Add event listeners
+    renderer.domElement.addEventListener('mousemove', handleMouseMove);
+    renderer.domElement.addEventListener('mousemove', handleMouseMoveForDrag);
+    renderer.domElement.addEventListener('mousedown', handleMouseDown);
+    renderer.domElement.addEventListener('mouseup', handleMouseUp);
+    renderer.domElement.addEventListener('click', handleClick);
+    
+    // Touch event listeners
+    if (isTouchDevice) {
+      renderer.domElement.addEventListener('touchstart', handleTouchStart, { passive: false });
+      renderer.domElement.addEventListener('touchmove', handleTouchMove, { passive: false });
+      renderer.domElement.addEventListener('touchend', handleTouchEnd);
+    }
+
+    // Handle resize
+    const handleResize = () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+
+      renderer.setSize(width, height);
+      composer.setSize(width, height);
+      
+      // Update FXAA resolution uniform
+      if (fxaaPassRef.current) {
+        fxaaPassRef.current.uniforms['resolution'].value.set(
+          1 / width,
+          1 / height
+        );
+      }
+    };
+    window.addEventListener('resize', handleResize);
+
+    // Animation loop
+    const animate = () => {
+      animationIdRef.current = requestAnimationFrame(animate);
+
+      const deltaTime = clockRef.current.getDelta();
+      const elapsedTime = clockRef.current.getElapsedTime();
+
+      // Update camera animation (fly-to)
+      if (cameraAnimRef.current.active) {
+        const anim = cameraAnimRef.current;
+        anim.progress += deltaTime / anim.duration;
+
+        if (anim.progress >= 1.0) {
+          anim.progress = 1.0;
+          anim.active = false;
+        }
+
+        // Ease-in-out cubic
+        const t = anim.progress;
+        const eased = t < 0.5
+          ? 4 * t * t * t
+          : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+        // Interpolate position
+        cameraRef.current.position.lerpVectors(anim.startPos, anim.endPos, eased);
+
+        // Interpolate target
+        const targetVec = cameraAnimRef.current.tempVec.lerpVectors(anim.startTarget, anim.endTarget, eased);
+        controlsRef.current.target.copy(targetVec);
+
+        // Interpolate FOV
+        cameraRef.current.fov = anim.startFov + (anim.endFov - anim.startFov) * eased;
+        cameraRef.current.updateProjectionMatrix();
+      }
+
+      // Apply camera shake
+      if (cameraShakeRef.current.intensity > 0.001) {
+        const shake = cameraShakeRef.current;
+        const offsetX = (Math.random() - 0.5) * shake.intensity;
+        const offsetY = (Math.random() - 0.5) * shake.intensity;
+        const offsetZ = (Math.random() - 0.5) * shake.intensity;
+
+        cameraRef.current.position.x += offsetX;
+        cameraRef.current.position.y += offsetY;
+        cameraRef.current.position.z += offsetZ;
+
+        shake.intensity *= shake.decay;
+      }
+
+      // Handle palette color transitions (Phase 5)
+      if (paletteTransitionRef.current.active) {
+        const trans = paletteTransitionRef.current;
+        trans.progress += deltaTime / trans.duration;
+
+        if (trans.progress >= 1.0) {
+          trans.progress = 1.0;
+          trans.active = false;
+        }
+
+        const t = easeInOutCubic(trans.progress);
+
+        // Interpolate colors
+        if (trans.currentColors && trans.targetColors) {
+          const interpolatedPrimary = lerpColor(trans.currentColors.primary, trans.targetColors.primary, t);
+          const interpolatedSecondary = lerpColor(trans.currentColors.secondary, trans.targetColors.secondary, t);
+          const interpolatedAccent = lerpColor(trans.currentColors.accent, trans.targetColors.accent, t);
+
+          // Update GPU particles
+          if (gpuParticlesRef.current) {
+            gpuParticlesRef.current.setColors(interpolatedPrimary, interpolatedSecondary, interpolatedAccent);
+          }
+
+          // Update wave grid
+          if (waveGridRef.current) {
+            waveGridRef.current.setColors(interpolatedPrimary, interpolatedSecondary, interpolatedAccent);
+          }
+
+          // Update background
+          if (backgroundRef.current) {
+            const bg1 = lerpColor(trans.currentColors.background[0], trans.targetColors.background[0], t);
+            const bg2 = lerpColor(trans.currentColors.background[1], trans.targetColors.background[1], t);
+            const bg3 = lerpColor(trans.currentColors.background[2], trans.targetColors.background[2], t);
+            backgroundRef.current.setColors(bg1, bg2, bg3);
+          }
+
+          // Update structures
+          structuresRef.current.forEach(structure => {
+            if (structure.material) {
+              structure.material.color = interpolatedPrimary;
+              structure.material.emissive = interpolatedAccent;
+            }
+          });
+
+          // Update ribbons
+          ribbonsRef.current.forEach(ribbon => {
+            if (ribbon.material) {
+              ribbon.material.color = interpolatedSecondary;
+            }
+          });
+        }
+      }
+
+      // Update controls
+      if (controlsRef.current) {
+        if (cameraAnimRef.current.active) {
+          controlsRef.current.enabled = false;
+        } else {
+          controlsRef.current.enabled = true;
+          controlsRef.current.update();
+        }
+      }
+
+      // Update shockwave manager
+      if (shockwaveManagerRef.current) {
+        shockwaveManagerRef.current.update(deltaTime);
+
+        // Pass all shockwaves to GPU particles (multi-shockwave support)
+        if (gpuParticlesRef.current) {
+          const shockwaves = shockwaveManagerRef.current.getAllShockwaves();
+          gpuParticlesRef.current.setShockwaves(shockwaves);
+        }
+      }
+
+      // Update attractors and pass to GPU particles
+      if (gpuParticlesRef.current) {
+        // Update simulation mode
+        const modeMap = { 'flow': 0, 'boids': 1, 'nbody': 2 };
+        gpuParticlesRef.current.velocityUniforms.uSimulationMode.value = modeMap[simulationMode] || 0;
+
+        // Update boids parameters
+        gpuParticlesRef.current.velocityUniforms.uBoidsSeparation.value = boidsSeparation;
+        gpuParticlesRef.current.velocityUniforms.uBoidsAlignment.value = boidsAlignment;
+        gpuParticlesRef.current.velocityUniforms.uBoidsCohesion.value = boidsCohesion;
+        gpuParticlesRef.current.velocityUniforms.uBoidsNeighborRadius.value = boidsNeighborRadius;
+        gpuParticlesRef.current.velocityUniforms.uBoidsMaxSpeed.value = boidsMaxSpeed;
+
+        // Update n-body parameters
+        gpuParticlesRef.current.velocityUniforms.uNbodyGravConstant.value = nbodyGravConstant;
+        gpuParticlesRef.current.velocityUniforms.uNbodySoftening.value = nbodySoftening;
+        gpuParticlesRef.current.velocityUniforms.uNbodyDamping.value = nbodyDamping;
+
+        // Update structure masses
+        structures.forEach((structure, i) => {
+          if (i < 8) {
+            gpuParticlesRef.current.velocityUniforms.uStructureMasses.value[i] = structure.mass || 1.0;
+          }
+        });
+
+        // Build attractor list (include mouse attractor if active)
+        const attractorList = [];
+
+        // Add mouse attractor as first attractor if active
+        if (mouseFollowRef.current && mouseAttractorRef.current) {
+          attractorList.push({
+            position: mouseAttractorRef.current.position,
+            strength: mouseAttractorRef.current.strength,
+            type: 'point',
+            radius: 3.0
+          });
+        }
+
+        // Add user-defined attractors from state
+        attractors.forEach(attr => {
+          if (attr.active !== false) {
+            attractorList.push({
+              position: attr.position,
+              strength: attr.strength,
+              type: attr.type,
+              radius: attr.radius || 3.0
+            });
+          }
+        });
+
+        gpuParticlesRef.current.setAttractors(attractorList);
+
+        // Update gravity based on gravityDirection state
+        const gravityDir = GRAVITY_VECTORS[gravityDirection] || DEFAULT_GRAVITY;
+        gpuParticlesRef.current.setGravity(gravityDir, gravity * 0.5);
+
+        // Pass structure data for force fields
+        const structureData = structuresRef.current.map(structure => ({
+          position: structure.getPosition(),
+          radius: structure.getBoundingRadius()
+        }));
+        gpuParticlesRef.current.setStructures(structureData);
+
+        // Update particle parameters (Phase 4)
+        gpuParticlesRef.current.velocityUniforms.uNoiseScale.value = curlNoiseScale;
+        gpuParticlesRef.current.velocityUniforms.uNoiseSpeed.value = curlNoiseSpeed;
+        gpuParticlesRef.current.velocityUniforms.uFlowDamping.value = particleDamping;
+        gpuParticlesRef.current.velocityUniforms.uFlowMaxSpeed.value = particleSpeedLimit;
+        gpuParticlesRef.current.particles.material.uniforms.uSize.value = particleSize;
+        gpuParticlesRef.current.particles.material.uniforms.uGlowIntensity.value = particleGlow;
+      }
+
+      // Periodic pulse effect (auto-pulse)
+      if (shockwaveManagerRef.current && autoPulseRef.current) {
+        const timeSinceLastPulse = elapsedTime - lastPulseTimeRef.current;
+        // Auto-pulse at configured interval
+        if (timeSinceLastPulse >= pulseIntervalRef.current) {
+          // Trigger pulse at center with moderate strength
+          shockwaveManagerRef.current.trigger(
+            new THREE.Vector3(0, 0, 0),
+            8.0,  // strength
+            3.0,  // thickness
+            6.0   // expansion speed
+          );
+          lastPulseTimeRef.current = elapsedTime;
+        }
+      }
+
+      // Update GPU particles
+      if (gpuParticlesRef.current) {
+        gpuParticlesRef.current.update(deltaTime, elapsedTime);
+      }
+
+      // Update structures
+      structuresRef.current.forEach(structure => {
+        structure.update(deltaTime, timeScale);
+      });
+
+      // Update ribbons
+      ribbonsRef.current.forEach(ribbon => {
+        ribbon.update(deltaTime, timeScale);
+      });
+      
+      // Update wave grid
+      if (waveGridRef.current) {
+        waveGridRef.current.update(deltaTime, timeScale);
+      }
+
+      // Update background
+      if (backgroundRef.current) {
+        backgroundRef.current.update(elapsedTime);
+      }
+
+      // Update film grain time
+      if (filmGrainPassRef.current && filmGrainPassRef.current.enabled) {
+        filmGrainPassRef.current.uniforms.time.value = elapsedTime;
+      }
+      
+      // Update chromatic aberration time
+      if (chromaticAberrationPassRef.current && chromaticAberrationPassRef.current.enabled) {
+        chromaticAberrationPassRef.current.uniforms.uTime.value = elapsedTime;
+      }
+
+      // Update depth of field
+      if (bokehPassRef.current) {
+        bokehPassRef.current.enabled = dofEnabled;
+        if (dofEnabled) {
+          bokehPassRef.current.uniforms.focus.value = dofFocus;
+          bokehPassRef.current.uniforms.aperture.value = dofAperture;
+        }
+      }
+
+      // Update post-processing parameters (Phase 4)
+      if (bloomPassRef.current) {
+        bloomPassRef.current.strength = bloomIntensity;
+        bloomPassRef.current.radius = bloomRadius;
+        bloomPassRef.current.threshold = bloomThreshold;
+      }
+      if (filmGrainPassRef.current && filmGrainPassRef.current.enabled) {
+        filmGrainPassRef.current.uniforms.intensity.value = filmGrainIntensity;
+      }
+      if (chromaticAberrationPassRef.current) {
+        chromaticAberrationPassRef.current.uniforms.uIntensity.value = chromaticIntensity;
+      }
+      if (vignettePassRef.current) {
+        vignettePassRef.current.uniforms.darkness.value = vignetteIntensity;
+      }
+      if (afterimagePassRef.current) {
+        afterimagePassRef.current.enabled = trailsEnabled;
+        afterimagePassRef.current.uniforms.damp.value = trailLength;
+      }
+
+      // Audio reactivity system
+      if (audioAnalyzerRef.current && audioEnabledRef.current) {
+        const audioData = audioAnalyzerRef.current.getFrequencyData();
+        
+        // Update audio visualizer state (throttled)
+        if (Math.floor(elapsedTime * 10) % 5 === 0) {
+          setAudioBass(audioData.bass);
+          setAudioMid(audioData.mid);
+          setAudioHigh(audioData.high);
+        }
+        
+        // Bass-triggered shockwave
+        const isBeat = audioAnalyzerRef.current.detectBeat(beatThreshold);
+        if (isBeat && elapsedTime - lastBeatTimeRef.current > 0.3) {
+          if (shockwaveManagerRef.current) {
+            shockwaveManagerRef.current.trigger(
+              new THREE.Vector3(0, 0, 0),
+              audioData.bass * 20.0,  // strength based on bass
+              2.0,
+              8.0
+            );
+          }
+          lastBeatTimeRef.current = elapsedTime;
+        }
+        
+        // Mid frequencies affect particle turbulence/speed
+        if (gpuParticlesRef.current) {
+          const turbulenceBoost = audioData.mid * 2.0;
+          gpuParticlesRef.current.velocityUniforms.uNoiseScale.value = 0.5 + turbulenceBoost;
+        }
+        
+        // High frequencies affect chromatic aberration
+        if (chromaticAberrationPassRef.current && chromaticAberrationPassRef.current.enabled) {
+          const chromaticBoost = audioData.high * 0.005;
+          chromaticAberrationPassRef.current.uniforms.uIntensity.value = chromaticIntensity + chromaticBoost;
+        }
+        
+        // Overall volume affects bloom intensity
+        if (bloomPassRef.current && bloomPassRef.current.enabled) {
+          const bloomBoost = audioData.overall * 0.5;
+          bloomPassRef.current.strength = bloomIntensity + bloomBoost;
+        }
+        
+        // Wave grid amplitude reacts to bass
+        if (waveGridRef.current && waveGridEnabled) {
+          const waveBoost = audioData.bass * 1.5;
+          waveGridRef.current.setWaveParams(waveAmplitude + waveBoost, waveFrequency, waveSpeed);
+        }
+        
+        // Structure pulse reacts to mid frequencies
+        structuresRef.current.forEach(structure => {
+          if (structure.config) {
+            const originalPulse = structure.config.pulseIntensity || 0.1;
+            structure.config.pulseIntensity = originalPulse + audioData.mid * 0.3;
+          }
+        });
+      }
+      
+      // Update quality manager (adaptive FPS-based quality adjustment)
+      if (qualityManagerRef.current && autoQuality) {
+        qualityManagerRef.current.update(deltaTime);
+        
+        // Update FPS display periodically (every half second)
+        if (Math.floor(elapsedTime * 2) % 1 === 0) {
+          const stats = qualityManagerRef.current.getStats();
+          setCurrentFps(stats.fps);
+        }
+      }
+
+      // Immersion mode camera drift
+      if (immersionMode && cameraRef.current) {
+        const drift = Math.sin(elapsedTime * 0.2) * 0.5;
+        cameraRef.current.position.y += drift * deltaTime;
+      }
+
+      // Render
+      if (composerRef.current) {
+        composerRef.current.render();
+      }
+    };
+    animate();
+
+    // Cleanup
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      renderer.domElement.removeEventListener('mousemove', handleMouseMove);
+      renderer.domElement.removeEventListener('mousemove', handleMouseMoveForDrag);
+      renderer.domElement.removeEventListener('mousedown', handleMouseDown);
+      renderer.domElement.removeEventListener('mouseup', handleMouseUp);
+      renderer.domElement.removeEventListener('click', handleClick);
+      
+      // Touch event cleanup
+      if (isTouchDevice) {
+        renderer.domElement.removeEventListener('touchstart', handleTouchStart);
+        renderer.domElement.removeEventListener('touchmove', handleTouchMove);
+        renderer.domElement.removeEventListener('touchend', handleTouchEnd);
+      }
+      
+      if (animationIdRef.current) {
+        cancelAnimationFrame(animationIdRef.current);
+      }
+      
+      // Clear shockwave manager
+      if (shockwaveManagerRef.current) {
+        shockwaveManagerRef.current.clear();
+        shockwaveManagerRef.current = null;
+      }
+      
+      // Clear mouse attractor
+      mouseAttractorRef.current = null;
+      
+      // Disconnect audio analyzer
+      if (audioAnalyzerRef.current) {
+        audioAnalyzerRef.current.disconnect();
+        audioAnalyzerRef.current = null;
+      }
+      
+      // Stop recording if active
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+        mediaRecorderRef.current = null;
+      }
+
+      // Dispose GPU particles
+      if (gpuParticlesRef.current) {
+        gpuParticlesRef.current.dispose();
+        gpuParticlesRef.current = null;
+      }
+
+      // Dispose structures
+      structuresRef.current.forEach(s => s.dispose());
+      structuresRef.current = [];
+
+      // Dispose ribbons
+      ribbonsRef.current.forEach(r => r.dispose());
+      ribbonsRef.current = [];
+      
+      // Dispose wave grid
+      if (waveGridRef.current) {
+        waveGridRef.current.dispose();
+        waveGridRef.current = null;
+      }
+
+      // Dispose background
+      if (backgroundRef.current) {
+        backgroundRef.current.dispose();
+      }
+
+      // Dispose renderer
+      if (rendererRef.current) {
+        rendererRef.current.dispose();
+        if (containerRef.current && rendererRef.current.domElement) {
+          containerRef.current.removeChild(rendererRef.current.domElement);
+        }
+      }
+    };
+  }, []);
+
+  // Detect prefers-reduced-motion on mount
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (mediaQuery.matches) {
+      setReducedMotion(true);
+      setTimeScale(0.3);
+      setAutoPulse(false);
+      setChromaticAberration(false);
+      showToast('Reduced motion mode enabled', 'info');
+    }
+    
+    const handleChange = (e) => {
+      if (e.matches) {
+        setReducedMotion(true);
+        setTimeScale(0.3);
+        setAutoPulse(false);
+        showToast('Reduced motion mode enabled', 'info');
+      }
+    };
+    
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  // Sync paused state to ref
+  useEffect(() => {
+    pausedRef.current = paused;
+    if (clockRef.current) {
+      if (paused) {
+        clockRef.current.stop();
+      } else {
+        clockRef.current.start();
+      }
+    }
+  }, [paused]);
+
+  // Update effects based on state changes
+  useEffect(() => {
+    if (composerRef.current && composerRef.current.passes[1]) {
+      composerRef.current.passes[1].strength = bloomIntensity;
+    }
+  }, [bloomIntensity]);
+
+  useEffect(() => {
+    if (controlsRef.current) {
+      controlsRef.current.autoRotate = autoRotate;
+      controlsRef.current.autoRotateSpeed = autoRotateSpeed;
+    }
+  }, [autoRotate, autoRotateSpeed]);
+
+  useEffect(() => {
+    if (backgroundRef.current) {
+      backgroundRef.current.setStyle(backgroundStyle);
+    }
+  }, [backgroundStyle]);
+
+  useEffect(() => {
+    if (filmGrainPassRef.current) {
+      filmGrainPassRef.current.enabled = filmGrain;
+    }
+  }, [filmGrain]);
+
+  // Sync interactivity state to refs for animation loop access
+  useEffect(() => {
+    mouseFollowRef.current = mouseFollow;
+  }, [mouseFollow]);
+  
+  // Chromatic aberration effect
+  useEffect(() => {
+    if (chromaticAberrationPassRef.current) {
+      chromaticAberrationPassRef.current.enabled = chromaticAberration;
+    }
+  }, [chromaticAberration]);
+  
+  useEffect(() => {
+    if (chromaticAberrationPassRef.current) {
+      chromaticAberrationPassRef.current.uniforms.uIntensity.value = chromaticIntensity;
+    }
+  }, [chromaticIntensity]);
+  
+  useEffect(() => {
+    autoPulseRef.current = autoPulse;
+  }, [autoPulse]);
+  
+  useEffect(() => {
+    pulseIntervalRef.current = pulseInterval;
+  }, [pulseInterval]);
+  
+  // Wave grid effects
+  useEffect(() => {
+    if (waveGridRef.current) {
+      waveGridRef.current.setVisible(waveGridEnabled);
+    }
+  }, [waveGridEnabled]);
+  
+  // Quality system effects
+  useEffect(() => {
+    if (qualityManagerRef.current) {
+      qualityManagerRef.current.setEnabled(autoQuality);
+    }
+  }, [autoQuality]);
+  
+  // Manual quality level change
+  useEffect(() => {
+    if (qualityManagerRef.current && !autoQuality) {
+      const preset = qualityManagerRef.current.setQuality(qualityLevel);
+      if (preset) {
+        setParticleCount(preset.particleSize * preset.particleSize);
+      }
+    }
+  }, [qualityLevel, autoQuality]);
+  
+  useEffect(() => {
+    if (waveGridRef.current) {
+      waveGridRef.current.setWaveParams(waveAmplitude, waveFrequency, waveSpeed);
+    }
+  }, [waveAmplitude, waveFrequency, waveSpeed]);
+
+  useEffect(() => {
+    if (waveGridRef.current) {
+      waveGridRef.current.setOpacity(waveOpacity);
+    }
+  }, [waveOpacity]);
+
+  useEffect(() => {
+    if (waveGridRef.current) {
+      waveGridRef.current.setParticleSize(waveParticleSize);
+    }
+  }, [waveParticleSize]);
+  
+  // Update velocity color mode
+  useEffect(() => {
+    if (gpuParticlesRef.current && gpuParticlesRef.current.particles) {
+      const colorModeMap = { 'speed': 0, 'direction': 1, 'acceleration': 2 };
+      gpuParticlesRef.current.particles.material.uniforms.uColorMode.value = colorModeMap[velocityColorMode] || 0;
+    }
+  }, [velocityColorMode]);
+
+  // Apply color palette with smooth transition (Phase 5)
+  useEffect(() => {
+    const palette = COLOR_PALETTES[colorPalette];
+    if (!palette) return;
+
+    // Get current palette colors (or use the new palette if no transition is active)
+    const currentPalette = paletteTransitionRef.current.targetColors || COLOR_PALETTES[colorPalette];
+
+    // Start palette transition
+    paletteTransitionRef.current = {
+      active: true,
+      currentColors: currentPalette,
+      targetColors: palette,
+      progress: 0,
+      duration: 1.0
+    };
+
+    // Apply bloom presets for this palette
+    const bloomPreset = BLOOM_PRESETS[colorPalette];
+    if (bloomPreset && bloomPassRef.current) {
+      bloomPassRef.current.strength = bloomPreset.strength;
+      bloomPassRef.current.radius = bloomPreset.radius;
+      bloomPassRef.current.threshold = bloomPreset.threshold;
+    }
+
+    // Update state for UI (structures and ribbons will be updated by the transition in the animation loop)
+    setStructures(prev => prev.map(s => ({
+      ...s,
+      color: palette.primary
+    })));
+    setRibbons(prev => prev.map(r => ({
+      ...r,
+      color: palette.secondary
+    })));
+  }, [colorPalette]);
+
+  // Show toast notification (must be defined early as many hooks depend on it)
+  const showToast = useCallback((message, type = 'info') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
+
+    // Auto-remove after 3 seconds
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3000);
+  }, []);
+
+  // Create default scene
+  const createDefaultScene = useCallback(() => {
+    const palette = COLOR_PALETTES[colorPalette];
+
+    // Central nested structure
+    const structureConfig = {
+      type: 'icosahedron',
+      position: new THREE.Vector3(0, 0, 0),
+      rotationSpeed: { x: 0.1, y: 0.2, z: 0.05 },
+      scale: 1,
+      pulseIntensity: 0.1,
+      materialStyle: 'holographic',
+      complexity: 1,
+      color: palette.primary
+    };
+    const structure = new GeometricStructure(sceneRef.current, structureConfig);
+    structuresRef.current.push(structure);
+    setStructures([{ id: Date.now(), ...structureConfig }]);
+
+    // GPU particles are already initialized in useEffect
+    // Set colors for particles
+    if (gpuParticlesRef.current) {
+      gpuParticlesRef.current.setColors(palette.primary, palette.secondary, palette.accent);
+    }
+
+    // Helix ribbon
+    const ribbonConfig = {
+      type: 'helix',
+      position: new THREE.Vector3(0, 0, 0),
+      animationSpeed: 1,
+      thickness: 0.08,
+      glowIntensity: 1.5,
+      color: palette.accent
+    };
+    const ribbon = new LightRibbon(sceneRef.current, ribbonConfig);
+    ribbonsRef.current.push(ribbon);
+    setRibbons([{ id: Date.now(), ...ribbonConfig }]);
+  }, [colorPalette]);
+
+  // Old emitter functions - commented out (GPU particles replace these)
+  /*
+  const addEmitter = useCallback((type = 'fountain') => {
+    // Replaced by GPU particle system
+  }, [colorPalette]);
+
+  const removeEmitter = useCallback((index) => {
+    // Replaced by GPU particle system
+  }, []);
+
+  const updateEmitter = useCallback((index, key, value) => {
+    // Replaced by GPU particle system
+  }, []);
+  */
+
+  // Attractor management functions
+  const addAttractor = useCallback((type = 'point') => {
+    const newAttractor = new Attractor(
+      new THREE.Vector3(
+        (Math.random() - 0.5) * 4,
+        (Math.random() - 0.5) * 4,
+        (Math.random() - 0.5) * 4
+      ),
+      type === 'repulsor' ? -5.0 : 5.0,
+      type
+    );
+    
+    setAttractors(prev => [...prev, {
+      id: Date.now(),
+      type,
+      position: newAttractor.position.clone(),
+      strength: newAttractor.strength,
+      radius: newAttractor.radius
+    }]);
+    
+    showToast(`${type.charAt(0).toUpperCase() + type.slice(1)} attractor added`, 'success');
+  }, [showToast]);
+  
+  const removeAttractor = useCallback((index) => {
+    setAttractors(prev => prev.filter((_, i) => i !== index));
+  }, []);
+  
+  const updateAttractor = useCallback((index, key, value) => {
+    setAttractors(prev => prev.map((a, i) =>
+      i === index ? { ...a, [key]: value } : a
+    ));
+  }, []);
+
+  // Add structure
+  const addStructure = useCallback((type = 'icosahedron') => {
+    const palette = COLOR_PALETTES[colorPalette];
+    const config = {
+      type,
+      position: new THREE.Vector3(
+        (Math.random() - 0.5) * 6,
+        (Math.random() - 0.5) * 4,
+        (Math.random() - 0.5) * 6
+      ),
+      rotationSpeed: { x: 0.1, y: 0.2, z: 0.05 },
+      scale: 0.5 + Math.random() * 0.5,
+      pulseIntensity: 0.1,
+      materialStyle: 'holographic',
+      complexity: 1,
+      color: palette.primary,
+      mass: 1.0 // For N-Body simulation mode
+    };
+
+    const structure = new GeometricStructure(sceneRef.current, config);
+    structuresRef.current.push(structure);
+    setStructures(prev => [...prev, { id: Date.now(), ...config }]);
+  }, [colorPalette]);
+
+  // Remove structure
+  const removeStructure = useCallback((index) => {
+    if (structuresRef.current[index]) {
+      structuresRef.current[index].dispose();
+      structuresRef.current.splice(index, 1);
+      setStructures(prev => prev.filter((_, i) => i !== index));
+    }
+  }, []);
+
+  // Update structure
+  const updateStructure = useCallback((index, key, value) => {
+    if (structuresRef.current[index]) {
+      if (key === 'type') {
+        structuresRef.current[index].config.type = value;
+        structuresRef.current[index].createStructure();
+      } else if (key === 'materialStyle') {
+        structuresRef.current[index].config.materialStyle = value;
+        structuresRef.current[index].createStructure();
+      } else {
+        structuresRef.current[index].config[key] = value;
+      }
+      setStructures(prev => prev.map((s, i) =>
+        i === index ? { ...s, [key]: value } : s
+      ));
+    }
+  }, []);
+
+  // Add ribbon
+  const addRibbon = useCallback((type = 'helix') => {
+    const palette = COLOR_PALETTES[colorPalette];
+    const config = {
+      type,
+      position: new THREE.Vector3(
+        (Math.random() - 0.5) * 4,
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 4
+      ),
+      animationSpeed: 1,
+      thickness: 0.08,
+      glowIntensity: 1.5,
+      color: palette.accent
+    };
+
+    const ribbon = new LightRibbon(sceneRef.current, config);
+    ribbonsRef.current.push(ribbon);
+    setRibbons(prev => [...prev, { id: Date.now(), ...config }]);
+  }, [colorPalette]);
+
+  // Remove ribbon
+  const removeRibbon = useCallback((index) => {
+    if (ribbonsRef.current[index]) {
+      ribbonsRef.current[index].dispose();
+      ribbonsRef.current.splice(index, 1);
+      setRibbons(prev => prev.filter((_, i) => i !== index));
+    }
+  }, []);
+
+  // Update ribbon
+  const updateRibbon = useCallback((index, key, value) => {
+    if (ribbonsRef.current[index]) {
+      if (key === 'type') {
+        ribbonsRef.current[index].config.type = value;
+        ribbonsRef.current[index].createRibbon();
+      } else {
+        ribbonsRef.current[index].config[key] = value;
+      }
+      setRibbons(prev => prev.map((r, i) =>
+        i === index ? { ...r, [key]: value } : r
+      ));
+    }
+  }, []);
+
+  // Clear scene
+  const clearScene = useCallback(() => {
+    // GPU particles remain active (managed separately)
+    // We only clear structures and ribbons
+
+    // Dispose all structures
+    structuresRef.current.forEach(s => s.dispose());
+    structuresRef.current = [];
+    setStructures([]);
+
+    // Dispose all ribbons
+    ribbonsRef.current.forEach(r => r.dispose());
+    ribbonsRef.current = [];
+    setRibbons([]);
+  }, []);
+
+  // Randomize
+  const randomize = useCallback(() => {
+    // Clear existing
+    clearScene();
+
+    // Random palette
+    const palettes = Object.keys(COLOR_PALETTES);
+    const randomPalette = palettes[Math.floor(Math.random() * palettes.length)];
+    setColorPalette(randomPalette);
+
+    const palette = COLOR_PALETTES[randomPalette];
+
+    // Add 1-3 structures
+    const structureTypes = ['icosahedron', 'torus', 'rings', 'helix', 'mobius'];
+    const numStructures = 1 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < numStructures; i++) {
+      const type = structureTypes[Math.floor(Math.random() * structureTypes.length)];
+      setTimeout(() => addStructure(type), i * 100);
+    }
+
+    // GPU particles remain (always active, no need to add)
+
+    // Add 1-2 ribbons
+    const ribbonTypes = ['helix', 'lissajous', 'toroidal', 'spiral'];
+    const numRibbons = 1 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < numRibbons; i++) {
+      const type = ribbonTypes[Math.floor(Math.random() * ribbonTypes.length)];
+      setTimeout(() => addRibbon(type), i * 100);
+    }
+
+    // Random settings
+    setTimeScale(0.5 + Math.random() * 1.5);
+    setBloomIntensity(1 + Math.random() * 1.5);
+    setTurbulence(Math.random() * 1.5);
+  }, [clearScene, addStructure, addRibbon]);
+
+  // Reset camera
+  const resetCamera = useCallback(() => {
+    if (cameraRef.current && controlsRef.current) {
+      cameraRef.current.position.set(0, 2, 8);
+      controlsRef.current.target.set(0, 0, 0);
+      controlsRef.current.update();
+    }
+  }, []);
+
+  // Fly camera to position with smooth animation
+  const flyTo = useCallback((position, target, fov, duration = 1.5) => {
+    if (!cameraRef.current || !controlsRef.current) return;
+
+    const anim = cameraAnimRef.current;
+    anim.startPos.copy(cameraRef.current.position);
+    anim.endPos.set(...position);
+    anim.startTarget.copy(controlsRef.current.target);
+    anim.endTarget.set(...target);
+    anim.startFov = cameraRef.current.fov;
+    anim.endFov = fov;
+    anim.progress = 0;
+    anim.duration = duration;
+    anim.active = true;
+  }, []);
+
+  // Fly to camera preset
+  const flyToPreset = useCallback((presetName) => {
+    const preset = CAMERA_PRESETS[presetName];
+    if (preset) {
+      flyTo(preset.position, preset.target, preset.fov);
+      showToast(`Camera: ${presetName}`, 'info');
+    }
+  }, [flyTo, showToast]);
+
+  // Trigger manual pulse
+  const triggerManualPulse = useCallback(() => {
+    if (shockwaveManagerRef.current) {
+      shockwaveManagerRef.current.trigger(
+        new THREE.Vector3(0, 0, 0),
+        12.0,  // strength
+        3.0,   // thickness
+        8.0    // expansion speed
+      );
+
+      // Trigger camera shake
+      cameraShakeRef.current.intensity = 0.15;
+
+      showToast('Pulse triggered!', 'success');
+    }
+  }, [showToast]);
+
+  // Toggle fullscreen
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(err => {
+        showToast('Could not enter fullscreen', 'error');
+      });
+      showToast('Fullscreen ON', 'info');
+    } else {
+      document.exitFullscreen();
+      showToast('Fullscreen OFF', 'info');
+    }
+  }, [showToast]);
+
+  // Toggle pause
+  const togglePause = useCallback(() => {
+    setPaused(prev => {
+      const newPaused = !prev;
+      showToast(newPaused ? 'Paused' : 'Resumed', 'info');
+      return newPaused;
+    });
+  }, [showToast]);
+
+  // Adjust quality
+  const adjustQuality = useCallback((direction) => {
+    const levels = ['ultra', 'high', 'medium', 'low', 'potato'];
+    const currentIdx = levels.indexOf(qualityLevel);
+    const newIdx = Math.max(0, Math.min(levels.length - 1, currentIdx - direction));
+    
+    if (newIdx !== currentIdx) {
+      setAutoQuality(false);
+      setQualityLevel(levels[newIdx]);
+      showToast(`Quality: ${levels[newIdx]}`, 'info');
+    }
+  }, [qualityLevel, showToast]);
+  
+  // Audio reactivity controls
+  const enableAudioReactivity = useCallback(async (source) => {
+    if (source === 'microphone') {
+      if (audioAnalyzerRef.current) {
+        const result = await audioAnalyzerRef.current.connectMicrophone();
+        if (result.success) {
+          setAudioReactivity(true);
+          setAudioSource('microphone');
+          audioEnabledRef.current = true;
+          showToast('Microphone connected', 'success');
+        } else {
+          showToast(`Microphone error: ${result.error}`, 'error');
+        }
+      }
+    }
+  }, [showToast]);
+  
+  const disableAudioReactivity = useCallback(() => {
+    if (audioAnalyzerRef.current) {
+      audioAnalyzerRef.current.disconnect();
+      audioEnabledRef.current = false;
+      setAudioReactivity(false);
+      setAudioSource('none');
+      showToast('Audio reactivity disabled', 'info');
+    }
+  }, [showToast]);
+  
+  // Screenshot capture
+  const captureScreenshot = useCallback((resolution = 2) => {
+    if (!rendererRef.current || !composerRef.current) return;
+    
+    const originalSize = new THREE.Vector2();
+    rendererRef.current.getSize(originalSize);
+    
+    // Render at higher resolution
+    const targetWidth = originalSize.x * resolution;
+    const targetHeight = originalSize.y * resolution;
+    
+    rendererRef.current.setSize(targetWidth, targetHeight);
+    composerRef.current.setSize(targetWidth, targetHeight);
+    
+    // Render one frame
+    composerRef.current.render();
+    
+    // Get image data
+    const dataUrl = rendererRef.current.domElement.toDataURL('image/png');
+    
+    // Restore original size
+    rendererRef.current.setSize(originalSize.x, originalSize.y);
+    composerRef.current.setSize(originalSize.x, originalSize.y);
+    
+    // Download
+    const link = document.createElement('a');
+    link.download = `luminous-flow-${Date.now()}.png`;
+    link.href = dataUrl;
+    link.click();
+    
+    showToast(`Screenshot saved (${targetWidth}x${targetHeight})`, 'success');
+  }, [showToast]);
+  
+  // Video recording
+  const startRecording = useCallback(() => {
+    if (!rendererRef.current || isRecording) return;
+    
+    try {
+      const stream = rendererRef.current.domElement.captureStream(30);
+      const mimeType = MediaRecorder.isTypeSupported('video/webm; codecs=vp9')
+        ? 'video/webm; codecs=vp9'
+        : 'video/webm';
+      
+      const recorder = new MediaRecorder(stream, {
+        mimeType,
+        videoBitsPerSecond: 2500000
+      });
+      
+      recordedChunksRef.current = [];
+      
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      };
+      
+      recorder.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        
+        const link = document.createElement('a');
+        link.download = `luminous-flow-${Date.now()}.webm`;
+        link.href = url;
+        link.click();
+        
+        URL.revokeObjectURL(url);
+        showToast('Recording saved', 'success');
+      };
+      
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+      showToast('Recording started (30fps)', 'info');
+    } catch (error) {
+      showToast(`Recording error: ${error.message}`, 'error');
+    }
+  }, [isRecording, showToast]);
+  
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+      setIsRecording(false);
+    }
+  }, []);
+
+  // Load preset scene
+  const loadPreset = useCallback((presetName) => {
+    const preset = SCENE_PRESETS[presetName];
+    if (!preset) return;
+
+    // Clear current scene
+    clearScene();
+
+    // Apply preset settings
+    setColorPalette(preset.palette);
+    setBackgroundStyle(preset.background);
+    setTimeScale(preset.timeScale);
+    setBloomIntensity(preset.bloom);
+    setWaveGridEnabled(preset.waveGrid);
+    setWaveAmplitude(preset.waveAmplitude);
+
+    // Apply simulation mode settings
+    if (preset.simulationMode) {
+      setSimulationMode(preset.simulationMode);
+
+      if (preset.simulationMode === 'boids' && preset.boids) {
+        setBoidsSeparation(preset.boids.separation);
+        setBoidsAlignment(preset.boids.alignment);
+        setBoidsCohesion(preset.boids.cohesion);
+        setBoidsNeighborRadius(preset.boids.neighborRadius);
+        setBoidsMaxSpeed(preset.boids.maxSpeed);
+      }
+
+      if (preset.simulationMode === 'nbody' && preset.nbody) {
+        setNbodyGravConstant(preset.nbody.gravConstant);
+        setNbodySoftening(preset.nbody.softening);
+        setNbodyDamping(preset.nbody.damping);
+      }
+    } else {
+      setSimulationMode('flow'); // Default to flow mode
+    }
+
+    // Add structures from preset
+    preset.structures.forEach((structConfig, i) => {
+      setTimeout(() => {
+        const config = {
+          type: structConfig.type,
+          position: new THREE.Vector3(...(structConfig.position || [0, 0, 0])),
+          rotationSpeed: {
+            x: (structConfig.rotationSpeed || 0.2) * 0.5,
+            y: structConfig.rotationSpeed || 0.2,
+            z: (structConfig.rotationSpeed || 0.2) * 0.25
+          },
+          scale: structConfig.scale || 1,
+          pulseIntensity: 0.1,
+          materialStyle: 'holographic',
+          complexity: 1,
+          color: COLOR_PALETTES[preset.palette].primary,
+          mass: structConfig.mass || 1.0
+        };
+
+        const structure = new GeometricStructure(sceneRef.current, config);
+        structuresRef.current.push(structure);
+        setStructures(prev => [...prev, { id: Date.now() + i, ...config }]);
+      }, i * 100);
+    });
+    
+    // Add ribbons from preset
+    preset.ribbons.forEach((ribbonConfig, i) => {
+      setTimeout(() => {
+        const config = {
+          type: ribbonConfig.type,
+          position: new THREE.Vector3(0, 0, 0),
+          animationSpeed: 1,
+          thickness: ribbonConfig.thickness || 0.08,
+          glowIntensity: 1.5,
+          color: COLOR_PALETTES[preset.palette].accent
+        };
+        
+        const ribbon = new LightRibbon(sceneRef.current, config);
+        ribbonsRef.current.push(ribbon);
+        setRibbons(prev => [...prev, { id: Date.now() + 100 + i, ...config }]);
+      }, (preset.structures.length + i) * 100);
+    });
+    
+    showToast(`Loaded: ${presetName}`, 'success');
+    setShowPresets(false);
+  }, [clearScene, showToast]);
+
+  // Toggle section expansion
+  const toggleSection = (section) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [section]: !prev[section]
+    }));
+  };
+
+  // Save expanded sections to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('luminousflow_expandedSections', JSON.stringify(expandedSections));
+    } catch (e) {
+      console.warn('Failed to save expanded sections to localStorage:', e);
+    }
+  }, [expandedSections]);
+
+  // Reset functions for each section
+  const resetGlobalControls = useCallback(() => {
+    setTimeScale(1.0);
+    setGravity(0.0);
+    setTurbulence(0.8);
+    setBloomIntensity(1.5);
+    setBloomRadius(0.8);
+    setBloomThreshold(0.0);
+    setVignetteIntensity(1.2);
+    setBackgroundStyle('gradient');
+    setColorPalette('Northern Lights');
+    setFilmGrain(true);
+    setFilmGrainIntensity(0.03);
+    setChromaticAberration(true);
+    setChromaticIntensity(0.003);
+    showToast('Global Controls reset to defaults', 'success');
+  }, [showToast]);
+
+  const resetParticleControls = useCallback(() => {
+    setSimulationMode('flow');
+    setParticleSize(2.0);
+    setParticleGlow(1.5);
+    setParticleSpeedLimit(8.0);
+    setParticleDamping(0.98);
+    setCurlNoiseScale(0.5);
+    setCurlNoiseSpeed(0.2);
+    setSpawnRadius(8.0);
+    setMouseFollow(false);
+    setAutoPulse(false);
+    setPulseInterval(3.0);
+    setWaveGridEnabled(false);
+    setWaveAmplitude(1.0);
+    setWaveSpeed(1.0);
+    setWaveFrequency(0.5);
+    setWaveOpacity(0.5);
+    setWaveParticleSize(2.5);
+    showToast('Particle Controls reset to defaults', 'success');
+  }, [showToast]);
+
+  const resetCameraControls = useCallback(() => {
+    flyToPreset('default');
+    setAutoRotateSpeed(0.5);
+    setDofEnabled(false);
+    setDofFocus(8.0);
+    setDofAperture(0.025);
+    showToast('Camera Controls reset to defaults', 'success');
+  }, [showToast, flyToPreset]);
+
+  const resetAudioControls = useCallback(() => {
+    setAudioReactivity(false);
+    setAudioSensitivity(1.5);
+    showToast('Audio Controls reset to defaults', 'success');
+  }, [showToast]);
+
+  // Scene save/load functions
+  const saveScene = useCallback(() => {
+    if (!sceneName.trim()) {
+      showToast('Please enter a scene name', 'error');
+      return;
+    }
+
+    const sceneData = {
+      // Global controls
+      timeScale,
+      gravity,
+      turbulence,
+      bloomIntensity,
+      bloomRadius,
+      bloomThreshold,
+      vignetteIntensity,
+      backgroundStyle,
+      colorPalette,
+      filmGrain,
+      filmGrainIntensity,
+      chromaticAberration,
+      chromaticIntensity,
+
+      // Particle controls
+      simulationMode,
+      particleSize,
+      particleGlow,
+      particleSpeedLimit,
+      particleDamping,
+      curlNoiseScale,
+      curlNoiseSpeed,
+      spawnRadius,
+      mouseFollow,
+      autoPulse,
+      pulseInterval,
+
+      // Boids parameters
+      boidsSeparation,
+      boidsAlignment,
+      boidsCohesion,
+      boidsNeighborRadius,
+      boidsMaxSpeed,
+
+      // N-Body parameters
+      nbodyGravConstant,
+      nbodySoftening,
+      nbodyDamping,
+
+      // Wave grid
+      waveGridEnabled,
+      waveAmplitude,
+      waveSpeed,
+      waveFrequency,
+      waveOpacity,
+      waveParticleSize,
+
+      // Camera
+      cameraPosition: cameraRef.current ? [cameraRef.current.position.x, cameraRef.current.position.y, cameraRef.current.position.z] : [0, 2, 8],
+      cameraTarget: controlsRef.current ? [controlsRef.current.target.x, controlsRef.current.target.y, controlsRef.current.target.z] : [0, 0, 0],
+      dofEnabled,
+      dofFocus,
+      dofAperture,
+
+      // Audio
+      audioReactivity,
+      audioSensitivity,
+
+      // Structures and ribbons
+      structures,
+      ribbons,
+      attractors,
+
+      // Quality
+      qualityLevel,
+      autoQuality,
+
+      // Timestamp
+      savedAt: new Date().toISOString()
+    };
+
+    const updatedScenes = {
+      ...savedScenes,
+      [sceneName.trim()]: sceneData
+    };
+
+    try {
+      localStorage.setItem('luminousflow_scenes', JSON.stringify(updatedScenes));
+      setSavedScenes(updatedScenes);
+      showToast(`Scene "${sceneName.trim()}" saved`, 'success');
+      setSceneName('');
+    } catch (e) {
+      console.error('Failed to save scene:', e);
+      showToast('Failed to save scene', 'error');
+    }
+  }, [sceneName, savedScenes, showToast, timeScale, gravity, turbulence, bloomIntensity, bloomRadius, bloomThreshold, vignetteIntensity, backgroundStyle, colorPalette, filmGrain, filmGrainIntensity, chromaticAberration, chromaticIntensity, simulationMode, particleSize, particleGlow, particleSpeedLimit, particleDamping, curlNoiseScale, curlNoiseSpeed, spawnRadius, mouseFollow, autoPulse, pulseInterval, boidsSeparation, boidsAlignment, boidsCohesion, boidsNeighborRadius, boidsMaxSpeed, nbodyGravConstant, nbodySoftening, nbodyDamping, waveGridEnabled, waveAmplitude, waveSpeed, waveFrequency, waveOpacity, waveParticleSize, dofEnabled, dofFocus, dofAperture, audioReactivity, audioSensitivity, structures, ribbons, attractors, qualityLevel, autoQuality]);
+
+  const loadScene = useCallback(() => {
+    if (!selectedScene || !savedScenes[selectedScene]) {
+      showToast('Please select a scene to load', 'error');
+      return;
+    }
+
+    const sceneData = savedScenes[selectedScene];
+
+    try {
+      // Global controls
+      if (sceneData.timeScale !== undefined) setTimeScale(sceneData.timeScale);
+      if (sceneData.gravity !== undefined) setGravity(sceneData.gravity);
+      if (sceneData.turbulence !== undefined) setTurbulence(sceneData.turbulence);
+      if (sceneData.bloomIntensity !== undefined) setBloomIntensity(sceneData.bloomIntensity);
+      if (sceneData.bloomRadius !== undefined) setBloomRadius(sceneData.bloomRadius);
+      if (sceneData.bloomThreshold !== undefined) setBloomThreshold(sceneData.bloomThreshold);
+      if (sceneData.vignetteIntensity !== undefined) setVignetteIntensity(sceneData.vignetteIntensity);
+      if (sceneData.backgroundStyle !== undefined) setBackgroundStyle(sceneData.backgroundStyle);
+      if (sceneData.colorPalette !== undefined) setColorPalette(sceneData.colorPalette);
+      if (sceneData.filmGrain !== undefined) setFilmGrain(sceneData.filmGrain);
+      if (sceneData.filmGrainIntensity !== undefined) setFilmGrainIntensity(sceneData.filmGrainIntensity);
+      if (sceneData.chromaticAberration !== undefined) setChromaticAberration(sceneData.chromaticAberration);
+      if (sceneData.chromaticIntensity !== undefined) setChromaticIntensity(sceneData.chromaticIntensity);
+
+      // Particle controls
+      if (sceneData.simulationMode !== undefined) setSimulationMode(sceneData.simulationMode);
+      if (sceneData.particleSize !== undefined) setParticleSize(sceneData.particleSize);
+      if (sceneData.particleGlow !== undefined) setParticleGlow(sceneData.particleGlow);
+      if (sceneData.particleSpeedLimit !== undefined) setParticleSpeedLimit(sceneData.particleSpeedLimit);
+      if (sceneData.particleDamping !== undefined) setParticleDamping(sceneData.particleDamping);
+      if (sceneData.curlNoiseScale !== undefined) setCurlNoiseScale(sceneData.curlNoiseScale);
+      if (sceneData.curlNoiseSpeed !== undefined) setCurlNoiseSpeed(sceneData.curlNoiseSpeed);
+      if (sceneData.spawnRadius !== undefined) setSpawnRadius(sceneData.spawnRadius);
+      if (sceneData.mouseFollow !== undefined) setMouseFollow(sceneData.mouseFollow);
+      if (sceneData.autoPulse !== undefined) setAutoPulse(sceneData.autoPulse);
+      if (sceneData.pulseInterval !== undefined) setPulseInterval(sceneData.pulseInterval);
+
+      // Boids parameters
+      if (sceneData.boidsSeparation !== undefined) setBoidsSeparation(sceneData.boidsSeparation);
+      if (sceneData.boidsAlignment !== undefined) setBoidsAlignment(sceneData.boidsAlignment);
+      if (sceneData.boidsCohesion !== undefined) setBoidsCohesion(sceneData.boidsCohesion);
+      if (sceneData.boidsNeighborRadius !== undefined) setBoidsNeighborRadius(sceneData.boidsNeighborRadius);
+      if (sceneData.boidsMaxSpeed !== undefined) setBoidsMaxSpeed(sceneData.boidsMaxSpeed);
+
+      // N-Body parameters
+      if (sceneData.nbodyGravConstant !== undefined) setNbodyGravConstant(sceneData.nbodyGravConstant);
+      if (sceneData.nbodySoftening !== undefined) setNbodySoftening(sceneData.nbodySoftening);
+      if (sceneData.nbodyDamping !== undefined) setNbodyDamping(sceneData.nbodyDamping);
+
+      // Wave grid
+      if (sceneData.waveGridEnabled !== undefined) setWaveGridEnabled(sceneData.waveGridEnabled);
+      if (sceneData.waveAmplitude !== undefined) setWaveAmplitude(sceneData.waveAmplitude);
+      if (sceneData.waveSpeed !== undefined) setWaveSpeed(sceneData.waveSpeed);
+      if (sceneData.waveFrequency !== undefined) setWaveFrequency(sceneData.waveFrequency);
+      if (sceneData.waveOpacity !== undefined) setWaveOpacity(sceneData.waveOpacity);
+      if (sceneData.waveParticleSize !== undefined) setWaveParticleSize(sceneData.waveParticleSize);
+
+      // Camera
+      if (sceneData.cameraPosition && cameraRef.current) {
+        cameraRef.current.position.set(...sceneData.cameraPosition);
+      }
+      if (sceneData.cameraTarget && controlsRef.current) {
+        controlsRef.current.target.set(...sceneData.cameraTarget);
+      }
+      if (sceneData.dofEnabled !== undefined) setDofEnabled(sceneData.dofEnabled);
+      if (sceneData.dofFocus !== undefined) setDofFocus(sceneData.dofFocus);
+      if (sceneData.dofAperture !== undefined) setDofAperture(sceneData.dofAperture);
+
+      // Audio
+      if (sceneData.audioReactivity !== undefined) setAudioReactivity(sceneData.audioReactivity);
+      if (sceneData.audioSensitivity !== undefined) setAudioSensitivity(sceneData.audioSensitivity);
+
+      // Quality
+      if (sceneData.qualityLevel !== undefined) setQualityLevel(sceneData.qualityLevel);
+      if (sceneData.autoQuality !== undefined) setAutoQuality(sceneData.autoQuality);
+
+      showToast(`Loaded scene "${selectedScene}"`, 'success');
+    } catch (e) {
+      console.error('Failed to load scene:', e);
+      showToast('Failed to load scene', 'error');
+    }
+  }, [selectedScene, savedScenes, showToast]);
+
+  const deleteScene = useCallback((name) => {
+    if (!window.confirm(`Delete scene "${name}"?`)) {
+      return;
+    }
+
+    const updatedScenes = { ...savedScenes };
+    delete updatedScenes[name];
+
+    try {
+      localStorage.setItem('luminousflow_scenes', JSON.stringify(updatedScenes));
+      setSavedScenes(updatedScenes);
+      if (selectedScene === name) {
+        setSelectedScene('');
+      }
+      showToast(`Scene "${name}" deleted`, 'success');
+    } catch (e) {
+      console.error('Failed to delete scene:', e);
+      showToast('Failed to delete scene', 'error');
+    }
+  }, [savedScenes, selectedScene, showToast]);
+
+  const exportScene = useCallback(() => {
+    if (!selectedScene || !savedScenes[selectedScene]) {
+      showToast('Please select a scene to export', 'error');
+      return;
+    }
+
+    const sceneData = savedScenes[selectedScene];
+    const jsonStr = JSON.stringify(sceneData, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `luminous-flow-${selectedScene}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(`Exported scene "${selectedScene}"`, 'success');
+  }, [selectedScene, savedScenes, showToast]);
+
+  const importScene = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const sceneData = JSON.parse(event.target.result);
+          const name = file.name.replace('.json', '').replace('luminous-flow-', '');
+
+          const updatedScenes = {
+            ...savedScenes,
+            [name]: sceneData
+          };
+
+          localStorage.setItem('luminousflow_scenes', JSON.stringify(updatedScenes));
+          setSavedScenes(updatedScenes);
+          setSelectedScene(name);
+          showToast(`Imported scene "${name}"`, 'success');
+        } catch (err) {
+          console.error('Failed to import scene:', err);
+          showToast('Invalid scene file', 'error');
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  }, [savedScenes, showToast]);
+
+  // URL sharing functions
+  const shareURL = useCallback(() => {
+    const keyParams = {
+      palette: colorPalette,
+      bg: backgroundStyle,
+      mode: simulationMode,
+      bloom: bloomIntensity,
+      particle: particleSize,
+      glow: particleGlow
+    };
+
+    try {
+      const jsonStr = JSON.stringify(keyParams);
+      const base64 = btoa(jsonStr);
+      const url = `${window.location.origin}${window.location.pathname}#${base64}`;
+
+      navigator.clipboard.writeText(url).then(() => {
+        showToast('Share link copied to clipboard!', 'success');
+      }).catch(() => {
+        // Fallback for browsers without clipboard API
+        const textarea = document.createElement('textarea');
+        textarea.value = url;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        showToast('Share link copied to clipboard!', 'success');
+      });
+    } catch (err) {
+      console.error('Failed to create share URL:', err);
+      showToast('Failed to create share link', 'error');
+    }
+  }, [colorPalette, backgroundStyle, simulationMode, bloomIntensity, particleSize, particleGlow, showToast]);
+
+  // Load state from URL hash on mount
+  useEffect(() => {
+    const hash = window.location.hash.slice(1);
+    if (hash) {
+      try {
+        const jsonStr = atob(hash);
+        const params = JSON.parse(jsonStr);
+
+        if (params.palette) setColorPalette(params.palette);
+        if (params.bg) setBackgroundStyle(params.bg);
+        if (params.mode) setSimulationMode(params.mode);
+        if (params.bloom !== undefined) setBloomIntensity(params.bloom);
+        if (params.particle !== undefined) setParticleSize(params.particle);
+        if (params.glow !== undefined) setParticleGlow(params.glow);
+
+        showToast('Loaded shared configuration', 'success');
+      } catch (err) {
+        console.warn('Failed to parse URL hash:', err);
+      }
+    }
+  }, [showToast]);
+
+  // Onboarding functions
+  const nextOnboardingStep = useCallback(() => {
+    if (onboardingStep < 3) {
+      setOnboardingStep(prev => prev + 1);
+    } else {
+      completeOnboarding();
+    }
+  }, [onboardingStep]);
+
+  const skipOnboarding = useCallback(() => {
+    completeOnboarding();
+  }, []);
+
+  const completeOnboarding = useCallback(() => {
+    try {
+      localStorage.setItem('luminousflow_onboarded', 'true');
+    } catch (e) {
+      console.warn('Failed to save onboarding state:', e);
+    }
+    setShowOnboarding(false);
+  }, []);
+
+  // Toggle item expansion
+  const toggleItem = (id) => {
+    setExpandedItems(prev => ({
+      ...prev,
+      [id]: !prev[id]
+    }));
+  };
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      // Don't trigger shortcuts if user is typing in an input
+      if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA' || event.target.tagName === 'SELECT') {
+        return;
+      }
+
+      // Build shortcut key with modifiers
+      let shortcutKey = event.key.toLowerCase();
+      if (event.shiftKey && event.key !== 'Shift') {
+        shortcutKey = `Shift+${event.key}`;
+      }
+
+      const shortcut = KEYBOARD_SHORTCUTS[shortcutKey] || KEYBOARD_SHORTCUTS[event.key];
+
+      if (!shortcut) return;
+      
+      event.preventDefault();
+      
+      const paletteNames = Object.keys(COLOR_PALETTES);
+      
+      switch (shortcut.action) {
+        case 'triggerPulse':
+          triggerManualPulse();
+          break;
+        case 'randomize':
+          randomize();
+          showToast('Scene randomized', 'success');
+          break;
+        case 'clearScene':
+          clearScene();
+          showToast('Scene cleared', 'info');
+          break;
+        case 'toggleUI':
+          setUiVisible(prev => !prev);
+          showToast(uiVisible ? 'UI hidden' : 'UI visible', 'info');
+          break;
+        case 'toggleFullscreen':
+          toggleFullscreen();
+          break;
+        case 'togglePause':
+          togglePause();
+          break;
+        case 'toggleMouseFollow':
+          setMouseFollow(prev => {
+            const newVal = !prev;
+            showToast(newVal ? 'Mouse follow ON' : 'Mouse follow OFF', 'info');
+            return newVal;
+          });
+          break;
+        case 'toggleWaveGrid':
+          setWaveGridEnabled(prev => {
+            const newVal = !prev;
+            showToast(newVal ? 'Wave grid ON' : 'Wave grid OFF', 'info');
+            return newVal;
+          });
+          break;
+        case 'palette1':
+        case 'palette2':
+        case 'palette3':
+        case 'palette4':
+        case 'palette5':
+        case 'palette6':
+          const paletteIndex = parseInt(shortcut.action.slice(-1)) - 1;
+          if (paletteNames[paletteIndex]) {
+            setColorPalette(paletteNames[paletteIndex]);
+            showToast(`Palette: ${paletteNames[paletteIndex]}`, 'success');
+          }
+          break;
+        case 'qualityUp':
+          adjustQuality(1);
+          break;
+        case 'qualityDown':
+          adjustQuality(-1);
+          break;
+        case 'resetCamera':
+          resetCamera();
+          showToast('Camera reset', 'info');
+          break;
+        case 'cameraTopDown':
+          flyToPreset('topDown');
+          break;
+        case 'cameraSide':
+          flyToPreset('side');
+          break;
+        case 'cameraCloseUp':
+          flyToPreset('closeUp');
+          break;
+        case 'cameraWide':
+          flyToPreset('wide');
+          break;
+        case 'cameraCinematic':
+          flyToPreset('cinematic');
+          break;
+        case 'cameraLow':
+          flyToPreset('low');
+          break;
+        case 'showHelp':
+          setShowHelp(prev => !prev);
+          break;
+        case 'togglePerfOverlay':
+          setShowPerfOverlay(prev => !prev);
+          break;
+        default:
+          break;
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [uiVisible, randomize, clearScene, resetCamera, flyToPreset, colorPalette, simulationMode, showToast]);
+  return (
+    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+      {/* Three.js Canvas */}
+      <div
+        ref={containerRef}
+        style={{
+          width: '100%',
+          height: '100%',
+          position: 'absolute',
+          top: 0,
+          left: 0
+        }}
+      />
+
+      {/* Toast Notifications */}
+      <div style={{
+        position: 'fixed',
+        bottom: '20px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 1000,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+        pointerEvents: 'none'
+      }}>
+        {toasts.map(toast => (
+          <div
+            key={toast.id}
+            style={{
+              padding: '12px 24px',
+              borderRadius: '8px',
+              background: toast.type === 'success' ? 'rgba(0, 200, 100, 0.9)'
+                : toast.type === 'error' ? 'rgba(200, 50, 50, 0.9)'
+                : 'rgba(50, 50, 70, 0.9)',
+              color: '#fff',
+              fontSize: '14px',
+              fontFamily: 'system-ui, -apple-system, sans-serif',
+              backdropFilter: 'blur(10px)',
+              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)',
+              animation: 'slideUp 0.3s ease-out',
+              pointerEvents: 'auto'
+            }}
+          >
+            {toast.message}
+          </div>
+        ))}
+      </div>
+
+      {/* Performance Overlay */}
+      {showPerfOverlay && (
+        <div style={{
+          position: 'fixed',
+          top: '10px',
+          left: '10px',
+          background: 'rgba(0, 0, 0, 0.7)',
+          backdropFilter: 'blur(5px)',
+          color: '#0f0',
+          fontFamily: 'monospace',
+          fontSize: '11px',
+          padding: '8px',
+          borderRadius: '4px',
+          pointerEvents: 'none',
+          zIndex: 1000,
+          lineHeight: '1.6'
+        }}>
+          <div><strong>PERFORMANCE STATS</strong></div>
+          <div>FPS: {currentFps}</div>
+          <div>Particles: {(particleCount / 1000).toFixed(0)}K</div>
+          <div>Quality: {qualityLevel}</div>
+          <div>Mode: {simulationMode}</div>
+          {rendererRef.current && (
+            <>
+              <div>Calls: {rendererRef.current.info.render.calls}</div>
+              <div>Triangles: {(rendererRef.current.info.render.triangles / 1000).toFixed(1)}K</div>
+              <div>Textures: {rendererRef.current.info.memory.textures}</div>
+              <div>Geometries: {rendererRef.current.info.memory.geometries}</div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Onboarding Overlay */}
+      {showOnboarding && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(10, 10, 20, 0.9)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2000,
+          padding: '20px'
+        }}>
+          <div style={{
+            maxWidth: '400px',
+            background: 'rgba(20, 20, 30, 0.95)',
+            borderRadius: '12px',
+            padding: '30px',
+            boxShadow: `0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px ${COLOR_PALETTES[colorPalette]?.primary || '#00ffaa'}`,
+            textAlign: 'center'
+          }}>
+            <div style={{
+              fontSize: '18px',
+              fontWeight: '600',
+              marginBottom: '20px',
+              color: COLOR_PALETTES[colorPalette]?.primary || '#00ffaa'
+            }}>
+              {onboardingStep === 1 && 'Welcome to Luminous Flow'}
+              {onboardingStep === 2 && 'Customize Everything'}
+              {onboardingStep === 3 && 'Keyboard Shortcuts'}
+            </div>
+
+            <div style={{
+              fontSize: '14px',
+              lineHeight: '1.6',
+              marginBottom: '30px',
+              color: '#ccc'
+            }}>
+              {onboardingStep === 1 && (
+                <>
+                  <div style={{ fontSize: '48px', marginBottom: '15px' }}>🖱️</div>
+                  <div>Click anywhere on the canvas to create beautiful shockwave pulses that interact with particles and structures.</div>
+                </>
+              )}
+              {onboardingStep === 2 && (
+                <>
+                  <div style={{ fontSize: '48px', marginBottom: '15px' }}>⚙️ →</div>
+                  <div>Open the side panel to customize particles, add structures, change colors, adjust physics, and create your own unique scenes.</div>
+                </>
+              )}
+              {onboardingStep === 3 && (
+                <>
+                  <div style={{ fontSize: '48px', marginBottom: '15px' }}>⌨️</div>
+                  <div>Press <strong style={{ color: COLOR_PALETTES[colorPalette]?.accent || '#aa55ff' }}>?</strong> anytime to see all available keyboard shortcuts for quick access to features.</div>
+                </>
+              )}
+            </div>
+
+            <div style={{
+              display: 'flex',
+              gap: '10px',
+              justifyContent: 'center'
+            }}>
+              <button
+                onClick={nextOnboardingStep}
+                style={{
+                  padding: '12px 24px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  background: COLOR_PALETTES[colorPalette]?.primary || '#00ffaa',
+                  color: '#000',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.transform = 'scale(1.05)';
+                  e.target.style.boxShadow = `0 0 20px ${COLOR_PALETTES[colorPalette]?.primary || '#00ffaa'}`;
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.transform = 'scale(1)';
+                  e.target.style.boxShadow = 'none';
+                }}
+              >
+                {onboardingStep < 3 ? 'Next' : 'Get Started'}
+              </button>
+            </div>
+
+            <div style={{
+              marginTop: '20px',
+              fontSize: '12px',
+              opacity: 0.6
+            }}>
+              <button
+                onClick={skipOnboarding}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#aaa',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  fontSize: '12px'
+                }}
+                onMouseEnter={(e) => { e.target.style.color = '#fff'; }}
+                onMouseLeave={(e) => { e.target.style.color = '#aaa'; }}
+              >
+                Skip tutorial
+              </button>
+            </div>
+
+            <div style={{
+              marginTop: '15px',
+              display: 'flex',
+              gap: '8px',
+              justifyContent: 'center'
+            }}>
+              {[1, 2, 3].map(step => (
+                <div
+                  key={step}
+                  style={{
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: step === onboardingStep
+                      ? (COLOR_PALETTES[colorPalette]?.primary || '#00ffaa')
+                      : 'rgba(255, 255, 255, 0.3)'
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Help Modal - Keyboard Shortcuts */}
+      {showHelp && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.8)',
+            backdropFilter: 'blur(5px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1001
+          }}
+          onClick={() => setShowHelp(false)}
+        >
+          <div
+            style={{
+              background: 'rgba(20, 20, 35, 0.95)',
+              borderRadius: '12px',
+              padding: '30px',
+              maxWidth: '500px',
+              width: '90%',
+              maxHeight: '80vh',
+              overflowY: 'auto',
+              boxShadow: '0 10px 40px rgba(0, 0, 0, 0.5)',
+              border: '1px solid rgba(255, 255, 255, 0.1)'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 style={{
+              margin: '0 0 20px 0',
+              fontSize: '20px',
+              fontWeight: '300',
+              letterSpacing: '2px',
+              color: '#fff',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
+            }}>
+              KEYBOARD SHORTCUTS
+            </h2>
+            <div style={{ display: 'grid', gap: '8px' }}>
+              {Object.entries(KEYBOARD_SHORTCUTS).map(([key, { description }]) => (
+                <div
+                  key={key}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '8px 12px',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    borderRadius: '6px'
+                  }}
+                >
+                  <span style={{
+                    fontSize: '13px',
+                    color: '#ccc',
+                    fontFamily: 'system-ui, -apple-system, sans-serif'
+                  }}>
+                    {description}
+                  </span>
+                  <kbd style={{
+                    padding: '4px 10px',
+                    background: 'rgba(255, 255, 255, 0.1)',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    fontFamily: 'monospace',
+                    color: '#00ffaa',
+                    border: '1px solid rgba(255, 255, 255, 0.2)'
+                  }}>
+                    {key === ' ' ? 'Space' : key}
+                  </kbd>
+                </div>
+              ))}
+            </div>
+            <p style={{
+              marginTop: '20px',
+              fontSize: '12px',
+              opacity: 0.5,
+              textAlign: 'center',
+              color: '#fff',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
+            }}>
+              Press ? or Escape to close
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Preset Gallery Modal */}
+      {showPresets && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.8)',
+            backdropFilter: 'blur(5px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1001
+          }}
+          onClick={() => setShowPresets(false)}
+        >
+          <div
+            style={{
+              background: 'rgba(20, 20, 35, 0.95)',
+              borderRadius: '12px',
+              padding: '30px',
+              maxWidth: '700px',
+              width: '90%',
+              maxHeight: '80vh',
+              overflowY: 'auto',
+              boxShadow: '0 10px 40px rgba(0, 0, 0, 0.5)',
+              border: '1px solid rgba(255, 255, 255, 0.1)'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <h2 style={{
+              margin: '0 0 20px 0',
+              fontSize: '20px',
+              fontWeight: '300',
+              letterSpacing: '2px',
+              color: '#fff',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
+            }}>
+              SCENE PRESETS
+            </h2>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+              gap: '15px'
+            }}>
+              {Object.entries(SCENE_PRESETS).map(([name, preset]) => (
+                <button
+                  key={name}
+                  onClick={() => loadPreset(name)}
+                  style={{
+                    padding: '20px',
+                    background: `linear-gradient(135deg, ${COLOR_PALETTES[preset.palette]?.background[0] || '#1a1a2e'}, ${COLOR_PALETTES[preset.palette]?.background[1] || '#16213e'})`,
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    transition: 'all 0.2s',
+                    position: 'relative',
+                    overflow: 'hidden'
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.transform = 'scale(1.02)';
+                    e.currentTarget.style.borderColor = COLOR_PALETTES[preset.palette]?.primary || '#00ffaa';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.transform = 'scale(1)';
+                    e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                  }}
+                >
+                  <div style={{
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    color: COLOR_PALETTES[preset.palette]?.primary || '#00ffaa',
+                    marginBottom: '8px',
+                    fontFamily: 'system-ui, -apple-system, sans-serif'
+                  }}>
+                    {name}
+                  </div>
+                  <div style={{
+                    fontSize: '11px',
+                    color: '#aaa',
+                    lineHeight: '1.4',
+                    fontFamily: 'system-ui, -apple-system, sans-serif'
+                  }}>
+                    {preset.description}
+                  </div>
+                  <div style={{
+                    position: 'absolute',
+                    top: '10px',
+                    right: '10px',
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: COLOR_PALETTES[preset.palette]?.primary || '#00ffaa',
+                    boxShadow: `0 0 10px ${COLOR_PALETTES[preset.palette]?.primary || '#00ffaa'}`
+                  }} />
+                </button>
+              ))}
+            </div>
+            <p style={{
+              marginTop: '20px',
+              fontSize: '12px',
+              opacity: 0.5,
+              textAlign: 'center',
+              color: '#fff',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
+            }}>
+              Click a preset to load it, or click outside to close
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Control Panel - conditionally visible */}
+      {uiVisible && <div style={{
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        width: '320px',
+        height: '100%',
+        background: 'rgba(10, 10, 20, 0.85)',
+        backdropFilter: 'blur(10px)',
+        borderLeft: '1px solid rgba(255, 255, 255, 0.1)',
+        overflowY: 'auto',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+        fontSize: '13px',
+        color: '#fff'
+      }}>
+        {/* Header */}
+        <div style={{
+          padding: '20px',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+          background: 'rgba(0, 0, 0, 0.3)'
+        }}>
+          <h1 style={{
+            margin: 0,
+            fontSize: '20px',
+            fontWeight: '300',
+            letterSpacing: '2px'
+          }}>
+            LUMINOUS FLOW
+          </h1>
+          <p style={{
+            margin: '5px 0 0',
+            opacity: 0.6,
+            fontSize: '11px'
+          }}>
+            3D Particle & Light Sculpture Sandbox
+          </p>
+        </div>
+
+        {/* Utility Buttons */}
+        <div style={{
+          padding: '15px 20px',
+          display: 'flex',
+          gap: '10px',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+          flexWrap: 'wrap'
+        }}>
+          <button
+            onClick={randomize}
+            style={{
+              ...buttonStyle,
+              flex: '1 1 30%'
+            }}
+          >
+            Randomize
+          </button>
+          <button
+            onClick={clearScene}
+            style={{
+              ...buttonStyle,
+              flex: '1 1 30%'
+            }}
+          >
+            Clear Scene
+          </button>
+          <button
+            onClick={shareURL}
+            style={{
+              ...buttonStyle,
+              flex: '1 1 30%',
+              background: 'rgba(100, 200, 255, 0.2)',
+              border: '1px solid rgba(100, 200, 255, 0.4)',
+              color: '#64c8ff'
+            }}
+          >
+            🔗 Share
+          </button>
+        </div>
+
+        {/* Scenes Save/Load Section */}
+        <div style={{
+          padding: '15px 20px',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+          background: 'rgba(100, 200, 255, 0.05)'
+        }}>
+          <div style={{
+            fontSize: '13px',
+            fontWeight: '500',
+            marginBottom: '12px',
+            color: '#64c8ff',
+            letterSpacing: '0.5px'
+          }}>
+            Scenes
+          </div>
+
+          {/* Save Scene */}
+          <div style={{ marginBottom: '12px' }}>
+            <input
+              type="text"
+              value={sceneName}
+              onChange={(e) => setSceneName(e.target.value)}
+              placeholder="Scene name..."
+              style={{
+                width: '100%',
+                padding: '8px',
+                fontSize: '12px',
+                background: 'rgba(255, 255, 255, 0.1)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: '4px',
+                color: 'white',
+                marginBottom: '8px'
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  saveScene();
+                }
+              }}
+            />
+            <button
+              onClick={saveScene}
+              style={{
+                ...buttonStyle,
+                width: '100%',
+                background: 'rgba(0, 255, 100, 0.2)',
+                border: '1px solid rgba(0, 255, 100, 0.4)',
+                color: '#00ff64'
+              }}
+            >
+              💾 Save Current Scene
+            </button>
+          </div>
+
+          {/* Load Scene */}
+          {Object.keys(savedScenes).length > 0 && (
+            <div>
+              <select
+                value={selectedScene}
+                onChange={(e) => setSelectedScene(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  fontSize: '12px',
+                  background: 'rgba(255, 255, 255, 0.1)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: '4px',
+                  color: 'white',
+                  marginBottom: '8px'
+                }}
+              >
+                <option value="">Select a scene...</option>
+                {Object.keys(savedScenes).map(name => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+
+              {selectedScene && (
+                <div style={{
+                  display: 'flex',
+                  gap: '8px',
+                  flexWrap: 'wrap'
+                }}>
+                  <button
+                    onClick={loadScene}
+                    style={{
+                      ...buttonStyle,
+                      flex: '1 1 45%',
+                      background: 'rgba(100, 200, 255, 0.2)',
+                      border: '1px solid rgba(100, 200, 255, 0.4)',
+                      color: '#64c8ff'
+                    }}
+                  >
+                    📂 Load
+                  </button>
+                  <button
+                    onClick={exportScene}
+                    style={{
+                      ...buttonStyle,
+                      flex: '1 1 45%',
+                      background: 'rgba(255, 170, 0, 0.2)',
+                      border: '1px solid rgba(255, 170, 0, 0.4)',
+                      color: '#ffaa00'
+                    }}
+                  >
+                    📤 Export
+                  </button>
+                  <button
+                    onClick={() => deleteScene(selectedScene)}
+                    style={{
+                      ...buttonStyle,
+                      width: '100%',
+                      background: 'rgba(255, 64, 64, 0.2)',
+                      border: '1px solid rgba(255, 64, 64, 0.4)',
+                      color: '#ff4040'
+                    }}
+                  >
+                    🗑️ Delete
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Import Scene */}
+          <button
+            onClick={importScene}
+            style={{
+              ...buttonStyle,
+              width: '100%',
+              marginTop: '12px',
+              background: 'rgba(170, 100, 255, 0.2)',
+              border: '1px solid rgba(170, 100, 255, 0.4)',
+              color: '#aa64ff'
+            }}
+          >
+            📥 Import Scene
+          </button>
+        </div>
+
+        {/* Global Controls Section */}
+        <Section
+          title="Global Controls"
+          expanded={expandedSections.global}
+          onToggle={() => toggleSection('global')}
+          onReset={resetGlobalControls}
+        >
+          <Slider
+            label="Time Scale"
+            value={timeScale}
+            onChange={setTimeScale}
+            min={0.1} max={3} step={0.1}
+          />
+          <Slider
+            label="Gravity"
+            value={gravity}
+            onChange={setGravity}
+            min={-2} max={2} step={0.1}
+          />
+          <Select
+            label="Gravity Direction"
+            value={gravityDirection}
+            onChange={setGravityDirection}
+            options={['down', 'up', 'left', 'right', 'forward', 'backward']}
+          />
+          <Slider
+            label="Turbulence"
+            value={turbulence}
+            onChange={setTurbulence}
+            min={0} max={3} step={0.1}
+          />
+          <Slider
+            label="Bloom Intensity"
+            value={bloomIntensity}
+            onChange={setBloomIntensity}
+            min={0} max={3} step={0.1}
+          />
+          <Slider
+            label="Bloom Radius"
+            value={bloomRadius}
+            onChange={setBloomRadius}
+            min={0.1} max={2.0} step={0.1}
+          />
+          <Slider
+            label="Bloom Threshold"
+            value={bloomThreshold}
+            onChange={setBloomThreshold}
+            min={0.0} max={1.0} step={0.05}
+          />
+          <Slider
+            label="Vignette Intensity"
+            value={vignetteIntensity}
+            onChange={setVignetteIntensity}
+            min={0.0} max={3.0} step={0.1}
+          />
+          <Select
+            label="Background Style"
+            value={backgroundStyle}
+            onChange={setBackgroundStyle}
+            options={['solid', 'gradient', 'nebula']}
+          />
+          <Select
+            label="Color Palette"
+            value={colorPalette}
+            onChange={setColorPalette}
+            options={Object.keys(COLOR_PALETTES)}
+          />
+          <Checkbox
+            label="Film Grain"
+            checked={filmGrain}
+            onChange={setFilmGrain}
+          />
+          {filmGrain && (
+            <Slider
+              label="Film Grain Intensity"
+              value={filmGrainIntensity}
+              onChange={setFilmGrainIntensity}
+              min={0.0} max={0.1} step={0.01}
+            />
+          )}
+          <Checkbox
+            label="Chromatic Aberration"
+            checked={chromaticAberration}
+            onChange={setChromaticAberration}
+          />
+          {chromaticAberration && (
+            <Slider
+              label="Aberration Intensity"
+              value={chromaticIntensity}
+              onChange={setChromaticIntensity}
+              min={0.001} max={0.01} step={0.001}
+            />
+          )}
+          <Checkbox
+            label="Particle Trails"
+            checked={trailsEnabled}
+            onChange={setTrailsEnabled}
+          />
+          {trailsEnabled && (
+            <Slider
+              label="Trail Length"
+              value={trailLength}
+              onChange={setTrailLength}
+              min={0.7} max={0.98} step={0.01}
+            />
+          )}
+        </Section>
+
+        {/* GPU Particles Section */}
+        <Section
+          title="GPU Particles"
+          expanded={expandedSections.emitters}
+          onToggle={() => toggleSection('emitters')}
+          onReset={resetParticleControls}
+        >
+          <div style={{
+            padding: '12px',
+            background: 'rgba(0, 255, 170, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(0, 255, 170, 0.3)',
+            marginBottom: '10px'
+          }}>
+            <div style={{
+              fontSize: '14px',
+              fontWeight: '500',
+              marginBottom: '6px',
+              color: '#00ffaa'
+            }}>
+              ✓ GPU Particles Active
+            </div>
+            <div style={{
+              fontSize: '11px',
+              opacity: 0.8,
+              lineHeight: '1.4'
+            }}>
+              65,536 particles (256×256 texture)<br/>
+              GPU-computed positions & velocities<br/>
+              Curl noise + central attractor
+            </div>
+          </div>
+
+          {/* Simulation Mode Controls */}
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            background: 'rgba(100, 200, 255, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(100, 200, 255, 0.3)'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#64c8ff'
+            }}>
+              Simulation Mode
+            </div>
+
+            <Select
+              label="Mode"
+              value={simulationMode}
+              onChange={setSimulationMode}
+              options={['flow', 'boids', 'nbody']}
+            />
+
+            {simulationMode === 'boids' && (
+              <div style={{
+                marginTop: '10px',
+                padding: '10px',
+                background: 'rgba(0, 0, 0, 0.3)',
+                borderRadius: '4px'
+              }}>
+                <div style={{ fontSize: '11px', fontWeight: '500', marginBottom: '6px' }}>Boids Parameters</div>
+                <Slider
+                  label="Separation"
+                  value={boidsSeparation}
+                  onChange={setBoidsSeparation}
+                  min={0} max={5} step={0.1}
+                />
+                <Slider
+                  label="Alignment"
+                  value={boidsAlignment}
+                  onChange={setBoidsAlignment}
+                  min={0} max={5} step={0.1}
+                />
+                <Slider
+                  label="Cohesion"
+                  value={boidsCohesion}
+                  onChange={setBoidsCohesion}
+                  min={0} max={5} step={0.1}
+                />
+                <Slider
+                  label="Neighbor Radius"
+                  value={boidsNeighborRadius}
+                  onChange={setBoidsNeighborRadius}
+                  min={0.5} max={5} step={0.1}
+                />
+                <Slider
+                  label="Max Speed"
+                  value={boidsMaxSpeed}
+                  onChange={setBoidsMaxSpeed}
+                  min={1} max={10} step={0.5}
+                />
+              </div>
+            )}
+
+            {simulationMode === 'nbody' && (
+              <div style={{
+                marginTop: '10px',
+                padding: '10px',
+                background: 'rgba(0, 0, 0, 0.3)',
+                borderRadius: '4px'
+              }}>
+                <div style={{ fontSize: '11px', fontWeight: '500', marginBottom: '6px' }}>N-Body Parameters</div>
+                <Slider
+                  label="Gravitational Constant"
+                  value={nbodyGravConstant}
+                  onChange={setNbodyGravConstant}
+                  min={0.01} max={2.0} step={0.01}
+                />
+                <Slider
+                  label="Softening"
+                  value={nbodySoftening}
+                  onChange={setNbodySoftening}
+                  min={0.1} max={2.0} step={0.1}
+                />
+                <Slider
+                  label="Damping"
+                  value={nbodyDamping}
+                  onChange={setNbodyDamping}
+                  min={0.99} max={1.0} step={0.001}
+                />
+              </div>
+            )}
+
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              {simulationMode === 'flow' && 'Default mode: curl noise + attractors + shockwaves'}
+              {simulationMode === 'boids' && 'Flocking behavior: particles avoid, align, and cohere'}
+              {simulationMode === 'nbody' && 'Gravitational simulation: structures as massive bodies'}
+            </div>
+          </div>
+
+          {/* Particle Parameters */}
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            background: 'rgba(0, 255, 255, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(0, 255, 255, 0.3)'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#00ffff'
+            }}>
+              Particle Parameters
+            </div>
+            <Slider
+              label="Particle Size"
+              value={particleSize}
+              onChange={setParticleSize}
+              min={0.5} max={5.0} step={0.1}
+            />
+            <Slider
+              label="Particle Glow"
+              value={particleGlow}
+              onChange={setParticleGlow}
+              min={0.0} max={3.0} step={0.1}
+            />
+            <Slider
+              label="Speed Limit"
+              value={particleSpeedLimit}
+              onChange={setParticleSpeedLimit}
+              min={1.0} max={20.0} step={0.5}
+            />
+            <Slider
+              label="Damping"
+              value={particleDamping}
+              onChange={setParticleDamping}
+              min={0.90} max={0.999} step={0.001}
+            />
+            <Slider
+              label="Curl Noise Scale"
+              value={curlNoiseScale}
+              onChange={setCurlNoiseScale}
+              min={0.1} max={2.0} step={0.1}
+            />
+            <Slider
+              label="Curl Noise Speed"
+              value={curlNoiseSpeed}
+              onChange={setCurlNoiseSpeed}
+              min={0.05} max={1.0} step={0.05}
+            />
+            <Slider
+              label="Spawn Radius"
+              value={spawnRadius}
+              onChange={setSpawnRadius}
+              min={1.0} max={20.0} step={0.5}
+            />
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              Controls for particle appearance and physics behavior
+            </div>
+          </div>
+
+          {/* Interactivity Controls */}
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            background: 'rgba(255, 170, 0, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(255, 170, 0, 0.3)'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#ffaa00'
+            }}>
+              Interactivity
+            </div>
+            <Checkbox
+              label="Mouse Follow (particles follow cursor)"
+              checked={mouseFollow}
+              onChange={setMouseFollow}
+            />
+            <Checkbox
+              label="Auto Pulse (periodic shockwaves)"
+              checked={autoPulse}
+              onChange={setAutoPulse}
+            />
+            {autoPulse && (
+              <Slider
+                label="Pulse Interval (seconds)"
+                value={pulseInterval}
+                onChange={setPulseInterval}
+                min={1} max={10} step={0.5}
+              />
+            )}
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              Click anywhere to trigger a shockwave!
+            </div>
+          </div>
+          
+          {/* Wave Grid Controls */}
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            background: 'rgba(0, 170, 255, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(0, 170, 255, 0.3)'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#00aaff'
+            }}>
+              Wave Grid
+            </div>
+            <Checkbox
+              label="Enable Wave Grid"
+              checked={waveGridEnabled}
+              onChange={setWaveGridEnabled}
+            />
+            {waveGridEnabled && (
+              <>
+                <Slider
+                  label="Wave Amplitude"
+                  value={waveAmplitude}
+                  onChange={setWaveAmplitude}
+                  min={0.2} max={3.0} step={0.1}
+                />
+                <Slider
+                  label="Wave Speed"
+                  value={waveSpeed}
+                  onChange={setWaveSpeed}
+                  min={0.2} max={3.0} step={0.1}
+                />
+                <Slider
+                  label="Wave Frequency"
+                  value={waveFrequency}
+                  onChange={setWaveFrequency}
+                  min={0.1} max={2.0} step={0.1}
+                />
+                <Slider
+                  label="Wave Opacity"
+                  value={waveOpacity}
+                  onChange={setWaveOpacity}
+                  min={0.0} max={1.0} step={0.05}
+                />
+                <Slider
+                  label="Wave Particle Size"
+                  value={waveParticleSize}
+                  onChange={setWaveParticleSize}
+                  min={0.5} max={5.0} step={0.1}
+                />
+              </>
+            )}
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              16,384 particles in undulating grid below the scene
+            </div>
+          </div>
+          
+          {/* Performance / Quality Controls */}
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            background: 'rgba(170, 85, 255, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(170, 85, 255, 0.3)'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#aa55ff'
+            }}>
+              Performance
+            </div>
+            
+            {/* FPS and Quality Display */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              padding: '8px',
+              background: 'rgba(0, 0, 0, 0.3)',
+              borderRadius: '4px',
+              marginBottom: '10px',
+              fontSize: '11px'
+            }}>
+              <span>FPS: <strong style={{ color: currentFps > 50 ? '#00ff88' : currentFps > 30 ? '#ffaa00' : '#ff4444' }}>{currentFps}</strong></span>
+              <span>Quality: <strong style={{ color: '#aa55ff', textTransform: 'capitalize' }}>{qualityLevel}</strong></span>
+              <span>Particles: <strong>{(particleCount / 1000).toFixed(0)}K</strong></span>
+            </div>
+            
+            <Checkbox
+              label="Auto Quality (adjusts based on FPS)"
+              checked={autoQuality}
+              onChange={setAutoQuality}
+            />
+            
+            {!autoQuality && (
+              <Select
+                label="Quality Level"
+                value={qualityLevel}
+                onChange={setQualityLevel}
+                options={['ultra', 'high', 'medium', 'low', 'potato']}
+              />
+            )}
+            
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              {autoQuality ? (
+                <>Auto mode adjusts quality based on FPS. Target: 50-60fps.</>
+              ) : (
+                <>Manual mode lets you choose quality level. Higher = more particles and effects.</>
+              )}
+            </div>
+          </div>
+          
+          {/* Attractor Management */}
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            background: 'rgba(170, 255, 0, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(170, 255, 0, 0.3)'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#aaff00'
+            }}>
+              Attractors ({attractors.length})
+            </div>
+            
+            <div style={{ display: 'flex', gap: '5px', marginBottom: '10px', flexWrap: 'wrap' }}>
+              <button onClick={() => addAttractor('point')} style={{ ...buttonStyle, flex: '1 1 45%', fontSize: '10px', padding: '6px' }}>
+                + Point
+              </button>
+              <button onClick={() => addAttractor('vortex')} style={{ ...buttonStyle, flex: '1 1 45%', fontSize: '10px', padding: '6px' }}>
+                + Vortex
+              </button>
+              <button onClick={() => addAttractor('orbit')} style={{ ...buttonStyle, flex: '1 1 45%', fontSize: '10px', padding: '6px' }}>
+                + Orbit
+              </button>
+              <button onClick={() => addAttractor('repulsor')} style={{ ...buttonStyle, flex: '1 1 45%', fontSize: '10px', padding: '6px' }}>
+                + Repulsor
+              </button>
+            </div>
+            
+            {attractors.map((attractor, index) => (
+              <div key={attractor.id} style={{
+                padding: '8px',
+                background: 'rgba(0, 0, 0, 0.3)',
+                borderRadius: '4px',
+                marginBottom: '6px'
+              }}>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: '6px'
+                }}>
+                  <span style={{ fontSize: '11px', textTransform: 'capitalize' }}>{attractor.type}</span>
+                  <button
+                    onClick={() => removeAttractor(index)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#ff6666',
+                      cursor: 'pointer',
+                      padding: '0',
+                      fontSize: '14px'
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+                <Slider
+                  label="Strength"
+                  value={attractor.strength}
+                  onChange={(v) => updateAttractor(index, 'strength', v)}
+                  min={-10} max={10} step={0.5}
+                />
+                <Slider
+                  label="Position X"
+                  value={attractor.position.x}
+                  onChange={(v) => updateAttractor(index, 'position', new THREE.Vector3(v, attractor.position.y, attractor.position.z))}
+                  min={-10} max={10} step={0.5}
+                />
+                <Slider
+                  label="Position Y"
+                  value={attractor.position.y}
+                  onChange={(v) => updateAttractor(index, 'position', new THREE.Vector3(attractor.position.x, v, attractor.position.z))}
+                  min={-10} max={10} step={0.5}
+                />
+                <Slider
+                  label="Position Z"
+                  value={attractor.position.z}
+                  onChange={(v) => updateAttractor(index, 'position', new THREE.Vector3(attractor.position.x, attractor.position.y, v))}
+                  min={-10} max={10} step={0.5}
+                />
+                {attractor.type === 'orbit' && (
+                  <Slider
+                    label="Orbit Radius"
+                    value={attractor.radius}
+                    onChange={(v) => updateAttractor(index, 'radius', v)}
+                    min={0.5} max={10} step={0.5}
+                  />
+                )}
+              </div>
+            ))}
+            
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              Add attractors to create force fields. Point attracts, Vortex spins, Orbit maintains distance, Repulsor pushes away.
+            </div>
+          </div>
+          
+          {/* Velocity Coloring */}
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            background: 'rgba(255, 100, 200, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(255, 100, 200, 0.3)'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#ff64c8'
+            }}>
+              Velocity Coloring
+            </div>
+            
+            <Select
+              label="Color Mode"
+              value={velocityColorMode}
+              onChange={setVelocityColorMode}
+              options={['speed', 'direction', 'acceleration']}
+            />
+            
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              Speed: color by velocity magnitude<br/>
+              Direction: hue based on movement direction<br/>
+              Acceleration: highlight sudden changes
+            </div>
+          </div>
+          
+          {/* Interactive Structures Info */}
+          {selectedStructureIndex !== null && (
+            <div style={{
+              marginTop: '12px',
+              padding: '12px',
+              background: 'rgba(255, 200, 0, 0.1)',
+              borderRadius: '4px',
+              border: '1px solid rgba(255, 200, 0, 0.3)'
+            }}>
+              <div style={{
+                fontSize: '12px',
+                fontWeight: '500',
+                marginBottom: '6px',
+                color: '#ffc800'
+              }}>
+                Selected: {structures[selectedStructureIndex]?.type || 'Structure'}
+              </div>
+              <div style={{
+                fontSize: '10px',
+                opacity: 0.8,
+                lineHeight: '1.4'
+              }}>
+                Drag to move • Shift+Click to select<br/>
+                Click elsewhere to deselect
+              </div>
+              <button
+                onClick={() => {
+                  setSelectedStructureIndex(null);
+                  selectedStructureRef.current = null;
+                }}
+                style={{ ...buttonStyle, width: '100%', marginTop: '8px', fontSize: '11px' }}
+              >
+                Deselect
+              </button>
+            </div>
+          )}
+          
+          {/* Touch Device Info */}
+          {isTouchDevice && (
+            <div style={{
+              marginTop: '12px',
+              padding: '12px',
+              background: 'rgba(0, 200, 255, 0.1)',
+              borderRadius: '4px',
+              border: '1px solid rgba(0, 200, 255, 0.3)'
+            }}>
+              <div style={{
+                fontSize: '12px',
+                fontWeight: '500',
+                marginBottom: '6px',
+                color: '#00c8ff'
+              }}>
+                Touch Gestures
+              </div>
+              <div style={{
+                fontSize: '10px',
+                opacity: 0.8,
+                lineHeight: '1.6'
+              }}>
+                • Tap: Shockwave<br/>
+                • Double-tap: Add structure<br/>
+                • Long press: Strong shockwave<br/>
+                • Swipe left/right: Change palette<br/>
+                • 3-finger swipe: Toggle UI
+              </div>
+            </div>
+          )}
+        </Section>
+
+        {/* Structures Section */}
+        <Section
+          title={`Structures (${structures.length})`}
+          expanded={expandedSections.structures}
+          onToggle={() => toggleSection('structures')}
+        >
+          <button
+            onClick={() => addStructure()}
+            style={{ ...buttonStyle, width: '100%', marginBottom: '10px' }}
+          >
+            + Add Structure
+          </button>
+          {structures.map((structure, index) => (
+            <ItemPanel
+              key={structure.id}
+              title={`${structure.type}`}
+              expanded={expandedItems[structure.id]}
+              onToggle={() => toggleItem(structure.id)}
+              onDelete={() => removeStructure(index)}
+            >
+              <Select
+                label="Type"
+                value={structure.type}
+                onChange={(v) => updateStructure(index, 'type', v)}
+                options={['icosahedron', 'torus', 'rings', 'helix', 'mobius']}
+              />
+              <Slider
+                label="Rotation Speed"
+                value={structure.rotationSpeed?.y || 0.2}
+                onChange={(v) => updateStructure(index, 'rotationSpeed', { x: v * 0.5, y: v, z: v * 0.25 })}
+                min={0} max={2} step={0.1}
+              />
+              <Slider
+                label="Pulse Intensity"
+                value={structure.pulseIntensity}
+                onChange={(v) => updateStructure(index, 'pulseIntensity', v)}
+                min={0} max={0.5} step={0.05}
+              />
+              <Slider
+                label="Scale"
+                value={structure.scale}
+                onChange={(v) => updateStructure(index, 'scale', v)}
+                min={0.2} max={3} step={0.1}
+              />
+              <Select
+                label="Material"
+                value={structure.materialStyle}
+                onChange={(v) => updateStructure(index, 'materialStyle', v)}
+                options={['glass', 'holographic', 'solid']}
+              />
+              {simulationMode === 'nbody' && (
+                <Slider
+                  label="Mass (N-Body)"
+                  value={structure.mass || 1.0}
+                  onChange={(v) => updateStructure(index, 'mass', v)}
+                  min={0.1} max={10} step={0.1}
+                />
+              )}
+            </ItemPanel>
+          ))}
+        </Section>
+
+        {/* Ribbons Section */}
+        <Section
+          title={`Ribbons (${ribbons.length})`}
+          expanded={expandedSections.ribbons}
+          onToggle={() => toggleSection('ribbons')}
+        >
+          <button
+            onClick={() => addRibbon()}
+            style={{ ...buttonStyle, width: '100%', marginBottom: '10px' }}
+          >
+            + Add Ribbon
+          </button>
+          {ribbons.map((ribbon, index) => (
+            <ItemPanel
+              key={ribbon.id}
+              title={`${ribbon.type} Ribbon`}
+              expanded={expandedItems[ribbon.id]}
+              onToggle={() => toggleItem(ribbon.id)}
+              onDelete={() => removeRibbon(index)}
+            >
+              <Select
+                label="Curve Type"
+                value={ribbon.type}
+                onChange={(v) => updateRibbon(index, 'type', v)}
+                options={['helix', 'lissajous', 'toroidal', 'spiral']}
+              />
+              <Slider
+                label="Animation Speed"
+                value={ribbon.animationSpeed}
+                onChange={(v) => updateRibbon(index, 'animationSpeed', v)}
+                min={0.1} max={3} step={0.1}
+              />
+              <Slider
+                label="Thickness"
+                value={ribbon.thickness}
+                onChange={(v) => updateRibbon(index, 'thickness', v)}
+                min={0.02} max={0.3} step={0.01}
+              />
+              <Slider
+                label="Glow Intensity"
+                value={ribbon.glowIntensity}
+                onChange={(v) => updateRibbon(index, 'glowIntensity', v)}
+                min={0.5} max={3} step={0.1}
+              />
+            </ItemPanel>
+          ))}
+        </Section>
+
+        {/* Camera Section */}
+        <Section
+          title="Camera"
+          expanded={expandedSections.camera}
+          onToggle={() => toggleSection('camera')}
+          onReset={resetCameraControls}
+        >
+          {/* Camera Presets */}
+          <div style={{
+            padding: '12px',
+            background: 'rgba(100, 150, 255, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(100, 150, 255, 0.3)',
+            marginBottom: '12px'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#6496ff'
+            }}>
+              Camera Presets
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' }}>
+              <button onClick={() => flyToPreset('default')} style={{ ...buttonStyle, fontSize: '10px', padding: '6px' }}>
+                Default
+              </button>
+              <button onClick={() => flyToPreset('topDown')} style={{ ...buttonStyle, fontSize: '10px', padding: '6px' }}>
+                Top-Down
+              </button>
+              <button onClick={() => flyToPreset('side')} style={{ ...buttonStyle, fontSize: '10px', padding: '6px' }}>
+                Side View
+              </button>
+              <button onClick={() => flyToPreset('closeUp')} style={{ ...buttonStyle, fontSize: '10px', padding: '6px' }}>
+                Close-Up
+              </button>
+              <button onClick={() => flyToPreset('wide')} style={{ ...buttonStyle, fontSize: '10px', padding: '6px' }}>
+                Wide
+              </button>
+              <button onClick={() => flyToPreset('cinematic')} style={{ ...buttonStyle, fontSize: '10px', padding: '6px' }}>
+                Cinematic
+              </button>
+              <button onClick={() => flyToPreset('low')} style={{ ...buttonStyle, fontSize: '10px', padding: '6px' }}>
+                Low Angle
+              </button>
+            </div>
+
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              Smooth camera transitions with Shift+1-6 shortcuts
+            </div>
+          </div>
+
+          {/* Depth of Field */}
+          <div style={{
+            padding: '12px',
+            background: 'rgba(255, 150, 100, 0.1)',
+            borderRadius: '4px',
+            border: '1px solid rgba(255, 150, 100, 0.3)',
+            marginBottom: '12px'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '10px',
+              color: '#ff9664'
+            }}>
+              Depth of Field
+            </div>
+
+            <Checkbox
+              label="Enable DOF (Bokeh Effect)"
+              checked={dofEnabled}
+              onChange={setDofEnabled}
+            />
+
+            {dofEnabled && (
+              <>
+                <Slider
+                  label="Focus Distance"
+                  value={dofFocus}
+                  onChange={setDofFocus}
+                  min={1} max={20} step={0.5}
+                />
+                <Slider
+                  label="Blur Amount (Aperture)"
+                  value={dofAperture}
+                  onChange={setDofAperture}
+                  min={0.001} max={0.1} step={0.001}
+                />
+              </>
+            )}
+
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              Cinematic depth of field effect with bokeh blur
+            </div>
+          </div>
+
+          <Checkbox
+            label="Auto Rotate"
+            checked={autoRotate}
+            onChange={setAutoRotate}
+          />
+          {autoRotate && (
+            <Slider
+              label="Rotation Speed"
+              value={autoRotateSpeed}
+              onChange={setAutoRotateSpeed}
+              min={0.1} max={2} step={0.1}
+            />
+          )}
+          <Checkbox
+            label="Immersion Mode"
+            checked={immersionMode}
+            onChange={setImmersionMode}
+          />
+          <button
+            onClick={resetCamera}
+            style={{ ...buttonStyle, width: '100%', marginTop: '10px' }}
+          >
+            Reset Camera
+          </button>
+        </Section>
+
+        {/* Audio Reactivity Section */}
+        <Section
+          title="Audio Reactivity"
+          expanded={expandedSections.audio}
+          onToggle={() => toggleSection('audio')}
+          onReset={resetAudioControls}
+        >
+          <div style={{
+            padding: '12px',
+            background: audioReactivity ? 'rgba(0, 255, 100, 0.1)' : 'rgba(255, 100, 100, 0.1)',
+            borderRadius: '4px',
+            border: `1px solid ${audioReactivity ? 'rgba(0, 255, 100, 0.3)' : 'rgba(255, 100, 100, 0.3)'}`,
+            marginBottom: '12px'
+          }}>
+            <div style={{
+              fontSize: '12px',
+              fontWeight: '500',
+              marginBottom: '8px',
+              color: audioReactivity ? '#00ff64' : '#ff6464'
+            }}>
+              {audioReactivity ? '🎵 Audio Active' : '🔇 Audio Inactive'}
+            </div>
+            
+            {!audioReactivity ? (
+              <button
+                onClick={() => enableAudioReactivity('microphone')}
+                style={{ ...buttonStyle, width: '100%' }}
+              >
+                Connect Microphone
+              </button>
+            ) : (
+              <button
+                onClick={disableAudioReactivity}
+                style={{ ...buttonStyle, width: '100%', background: 'rgba(255, 100, 100, 0.2)' }}
+              >
+                Disconnect Audio
+              </button>
+            )}
+            
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4'
+            }}>
+              Microphone permission required. Audio affects particles, shockwaves, bloom, and more.
+            </div>
+          </div>
+          
+          {audioReactivity && (
+            <>
+              <div style={{
+                padding: '8px',
+                background: 'rgba(0, 0, 0, 0.3)',
+                borderRadius: '4px',
+                marginBottom: '10px'
+              }}>
+                <div style={{ fontSize: '11px', marginBottom: '6px', opacity: 0.7 }}>Frequency Levels</div>
+                <div style={{ display: 'flex', gap: '8px', fontSize: '10px' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ opacity: 0.5, marginBottom: '2px' }}>Bass</div>
+                    <div style={{
+                      height: '4px',
+                      background: 'rgba(255, 255, 255, 0.1)',
+                      borderRadius: '2px',
+                      overflow: 'hidden'
+                    }}>
+                      <div style={{
+                        height: '100%',
+                        width: `${audioBass * 100}%`,
+                        background: '#ff4444',
+                        transition: 'width 0.1s'
+                      }} />
+                    </div>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ opacity: 0.5, marginBottom: '2px' }}>Mid</div>
+                    <div style={{
+                      height: '4px',
+                      background: 'rgba(255, 255, 255, 0.1)',
+                      borderRadius: '2px',
+                      overflow: 'hidden'
+                    }}>
+                      <div style={{
+                        height: '100%',
+                        width: `${audioMid * 100}%`,
+                        background: '#44ff44',
+                        transition: 'width 0.1s'
+                      }} />
+                    </div>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ opacity: 0.5, marginBottom: '2px' }}>High</div>
+                    <div style={{
+                      height: '4px',
+                      background: 'rgba(255, 255, 255, 0.1)',
+                      borderRadius: '2px',
+                      overflow: 'hidden'
+                    }}>
+                      <div style={{
+                        height: '100%',
+                        width: `${audioHigh * 100}%`,
+                        background: '#4444ff',
+                        transition: 'width 0.1s'
+                      }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              <Slider
+                label="Beat Threshold"
+                value={beatThreshold}
+                onChange={setBeatThreshold}
+                min={0.3} max={0.9} step={0.05}
+              />
+              
+              <div style={{
+                fontSize: '10px',
+                opacity: 0.6,
+                marginTop: '8px',
+                lineHeight: '1.4'
+              }}>
+                Mappings:<br/>
+                • Bass → Shockwaves + Structure pulse<br/>
+                • Mid → Particle turbulence<br/>
+                • High → Chromatic aberration<br/>
+                • Volume → Bloom + Wave amplitude
+              </div>
+            </>
+          )}
+        </Section>
+
+        {/* Media Capture Section */}
+        <Section
+          title="Screenshot & Recording"
+          expanded={expandedSections.media}
+          onToggle={() => toggleSection('media')}
+        >
+          <div style={{
+            display: 'flex',
+            gap: '8px',
+            marginBottom: '12px'
+          }}>
+            <button
+              onClick={() => captureScreenshot(2)}
+              style={{ ...buttonStyle }}
+            >
+              📸 Screenshot (2x)
+            </button>
+            <button
+              onClick={() => captureScreenshot(4)}
+              style={{ ...buttonStyle }}
+            >
+              📸 HQ (4x)
+            </button>
+          </div>
+          
+          <div style={{
+            padding: '12px',
+            background: isRecording ? 'rgba(255, 50, 50, 0.1)' : 'rgba(50, 50, 70, 0.1)',
+            borderRadius: '4px',
+            border: `1px solid ${isRecording ? 'rgba(255, 50, 50, 0.3)' : 'rgba(50, 50, 70, 0.3)'}`,
+            marginBottom: '10px'
+          }}>
+            {!isRecording ? (
+              <button
+                onClick={startRecording}
+                style={{
+                  ...buttonStyle,
+                  width: '100%',
+                  background: 'rgba(255, 50, 50, 0.2)',
+                  border: '1px solid rgba(255, 50, 50, 0.4)'
+                }}
+              >
+                🔴 Start Recording
+              </button>
+            ) : (
+              <button
+                onClick={stopRecording}
+                style={{
+                  ...buttonStyle,
+                  width: '100%',
+                  background: 'rgba(255, 50, 50, 0.3)',
+                  border: '1px solid rgba(255, 50, 50, 0.5)',
+                  animation: 'pulse 1s infinite'
+                }}
+              >
+                ⏹️ Stop Recording
+              </button>
+            )}
+            
+            <div style={{
+              fontSize: '10px',
+              opacity: 0.6,
+              marginTop: '8px',
+              lineHeight: '1.4',
+              textAlign: 'center'
+            }}>
+              {isRecording ? 'Recording at 30fps...' : 'Capture WebM video at 30fps'}
+            </div>
+          </div>
+          
+          <div style={{
+            fontSize: '10px',
+            opacity: 0.6,
+            lineHeight: '1.4'
+          }}>
+            Screenshots are saved at 2x or 4x native resolution for high quality prints and social media.
+          </div>
+        </Section>
+
+        {/* Footer */}
+        <div style={{
+          padding: '15px 20px',
+          textAlign: 'center',
+          opacity: 0.5,
+          fontSize: '11px',
+          borderTop: '1px solid rgba(255, 255, 255, 0.1)'
+        }}>
+          Drag to orbit | Scroll to zoom | Press ? for help
+        </div>
+
+        {/* Preset Gallery Button */}
+        <div style={{
+          padding: '10px 20px 20px',
+          borderTop: '1px solid rgba(255, 255, 255, 0.1)'
+        }}>
+          <button
+            onClick={() => setShowPresets(true)}
+            style={{
+              ...buttonStyle,
+              width: '100%',
+              background: 'linear-gradient(135deg, rgba(0, 255, 170, 0.2), rgba(0, 170, 255, 0.2))',
+              border: '1px solid rgba(0, 255, 170, 0.4)'
+            }}
+          >
+            Open Preset Gallery
+          </button>
+        </div>
+      </div>}
+
+      {/* Hidden UI Buttons - visible when UI is hidden */}
+      {!uiVisible && (
+        <div style={{
+          position: 'absolute',
+          top: '20px',
+          right: '20px',
+          display: 'flex',
+          gap: '10px',
+          zIndex: 100
+        }}>
+          <button
+            onClick={() => setShowHelp(true)}
+            style={{
+              width: '40px',
+              height: '40px',
+              borderRadius: '50%',
+              background: 'rgba(10, 10, 20, 0.8)',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              color: '#fff',
+              fontSize: '18px',
+              cursor: 'pointer',
+              backdropFilter: 'blur(10px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+            title="Keyboard Shortcuts (?)"
+          >
+            ?
+          </button>
+          <button
+            onClick={() => setUiVisible(true)}
+            style={{
+              padding: '10px 20px',
+              borderRadius: '20px',
+              background: 'rgba(10, 10, 20, 0.8)',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              color: '#fff',
+              fontSize: '12px',
+              cursor: 'pointer',
+              backdropFilter: 'blur(10px)',
+              fontFamily: 'system-ui, -apple-system, sans-serif'
+            }}
+            title="Show UI (H)"
+          >
+            Show UI
+          </button>
+        </div>
+      )}
+
+      {/* CSS Animation Keyframes */}
+      <style>{`
+        @keyframes slideUp {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        
+        @keyframes pulse {
+          0%, 100% {
+            opacity: 1;
+          }
+          50% {
+            opacity: 0.6;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// ============================================================================
+// UI COMPONENTS
+// ============================================================================
+
+const buttonStyle = {
+  background: 'rgba(255, 255, 255, 0.1)',
+  border: '1px solid rgba(255, 255, 255, 0.2)',
+  borderRadius: '4px',
+  color: '#fff',
+  padding: '8px 16px',
+  cursor: 'pointer',
+  fontSize: '12px',
+  transition: 'all 0.2s',
+  flex: 1
+};
+
+function Section({ title, expanded, onToggle, onReset, children }) {
+  return (
+    <div style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)' }}>
+      <div
+        style={{
+          padding: '12px 20px',
+          cursor: 'pointer',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          background: 'rgba(255, 255, 255, 0.03)',
+          gap: '10px'
+        }}
+      >
+        <span
+          onClick={onToggle}
+          style={{
+            fontWeight: '500',
+            letterSpacing: '0.5px',
+            flex: 1
+          }}
+        >
+          {title}
+        </span>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {onReset && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onReset();
+              }}
+              style={{
+                padding: '4px 8px',
+                fontSize: '10px',
+                background: 'rgba(255, 170, 0, 0.2)',
+                border: '1px solid rgba(255, 170, 0, 0.4)',
+                borderRadius: '3px',
+                color: '#ffaa00',
+                cursor: 'pointer',
+                fontWeight: '500'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = 'rgba(255, 170, 0, 0.3)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = 'rgba(255, 170, 0, 0.2)';
+              }}
+            >
+              Reset
+            </button>
+          )}
+          <span
+            onClick={onToggle}
+            style={{ opacity: 0.5 }}
+          >
+            {expanded ? '−' : '+'}
+          </span>
+        </div>
+      </div>
+      {expanded && (
+        <div style={{ padding: '10px 20px' }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ItemPanel({ title, expanded, onToggle, onDelete, children }) {
+  return (
+    <div style={{
+      background: 'rgba(255, 255, 255, 0.05)',
+      borderRadius: '4px',
+      marginBottom: '8px',
+      overflow: 'hidden'
+    }}>
+      <div
+        style={{
+          padding: '10px 12px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          cursor: 'pointer'
+        }}
+        onClick={onToggle}
+      >
+        <span style={{ fontSize: '12px', textTransform: 'capitalize' }}>{title}</span>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <span style={{ opacity: 0.5, fontSize: '12px' }}>{expanded ? '−' : '+'}</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#ff6666',
+              cursor: 'pointer',
+              padding: '0',
+              fontSize: '14px'
+            }}
+          >
+            ×
+          </button>
+        </div>
+      </div>
+      {expanded && (
+        <div style={{ padding: '10px 12px', borderTop: '1px solid rgba(255, 255, 255, 0.1)' }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Slider({ label, value, onChange, min, max, step }) {
+  return (
+    <div style={{ marginBottom: '12px' }}>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        marginBottom: '4px',
+        fontSize: '11px'
+      }}>
+        <span style={{ opacity: 0.7 }}>{label}</span>
+        <span style={{ opacity: 0.5 }}>{typeof value === 'number' ? value.toFixed(2) : value}</span>
+      </div>
+      <input
+        type="range"
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        min={min}
+        max={max}
+        step={step}
+        style={{
+          width: '100%',
+          height: '4px',
+          background: 'rgba(255, 255, 255, 0.2)',
+          borderRadius: '2px',
+          appearance: 'none',
+          cursor: 'pointer'
+        }}
+      />
+    </div>
+  );
+}
+
+function Select({ label, value, onChange, options }) {
+  return (
+    <div style={{ marginBottom: '12px' }}>
+      <div style={{
+        fontSize: '11px',
+        opacity: 0.7,
+        marginBottom: '4px'
+      }}>
+        {label}
+      </div>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          width: '100%',
+          padding: '6px 10px',
+          background: 'rgba(255, 255, 255, 0.1)',
+          border: '1px solid rgba(255, 255, 255, 0.2)',
+          borderRadius: '4px',
+          color: '#fff',
+          fontSize: '12px',
+          cursor: 'pointer'
+        }}
+      >
+        {options.map(opt => (
+          <option key={opt} value={opt} style={{ background: '#1a1a2e' }}>
+            {opt}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function Checkbox({ label, checked, onChange }) {
+  return (
+    <label style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      marginBottom: '12px',
+      cursor: 'pointer',
+      fontSize: '12px'
+    }}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ cursor: 'pointer' }}
+      />
+      <span style={{ opacity: 0.8 }}>{label}</span>
+    </label>
+  );
+}
+
+// ============================================================================
+// RENDER
+// ============================================================================
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<LuminousFlow />);
+
+export default LuminousFlow;

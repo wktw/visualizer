@@ -5402,7 +5402,7 @@ function LuminousFlow() {
       [id]: !prev[id]
     }));
   };
-// Keyboard shortcuts
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (event) => {
       // Don't trigger shortcuts if user is typing in an input

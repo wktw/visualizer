@@ -2994,17 +2994,17 @@ class BackgroundManager {
     this.createBackground();
   }
 
-  setColors(colors) {
-    this.colors = colors;
+    setColors(color1, color2, color3) {
+    this.colors = [color1, color2, color3];
     if (this.mesh && this.mesh.material.uniforms) {
       if (this.mesh.material.uniforms.color1) {
-        this.mesh.material.uniforms.color1.value = new THREE.Color(colors[0]);
+        this.mesh.material.uniforms.color1.value = new THREE.Color(color1);
       }
       if (this.mesh.material.uniforms.color2) {
-        this.mesh.material.uniforms.color2.value = new THREE.Color(colors[1]);
+        this.mesh.material.uniforms.color2.value = new THREE.Color(color2);
       }
       if (this.mesh.material.uniforms.color3) {
-        this.mesh.material.uniforms.color3.value = new THREE.Color(colors[2]);
+        this.mesh.material.uniforms.color3.value = new THREE.Color(color3);
       }
     }
   }

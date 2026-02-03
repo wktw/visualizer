@@ -827,15 +827,15 @@ class GPUParticleSystem {
     this.positionUniforms.uDelta = { value: 0.0 };
     this.velocityUniforms.uTime = { value: 0.0 };
     this.velocityUniforms.uDelta = { value: 0.0 };
-    this.velocityUniforms.uNoiseScale = { value: 0.5 };
+    this.velocityUniforms.uNoiseScale = { value: 0.15 };
     this.velocityUniforms.uNoiseSpeed = { value: 0.2 };
 
     // Simulation mode uniforms
     this.velocityUniforms.uSimulationMode = { value: 0 }; // 0=flow, 1=boids, 2=nbody
 
     // Flow mode parameters
-    this.velocityUniforms.uFlowDamping = { value: 0.98 };
-    this.velocityUniforms.uFlowMaxSpeed = { value: 8.0 };
+    this.velocityUniforms.uFlowDamping = { value: 0.995 };
+    this.velocityUniforms.uFlowMaxSpeed = { value: 15.0 };
 
     // Boids parameters
     this.velocityUniforms.uBoidsSeparation = { value: 1.5 };
@@ -882,7 +882,7 @@ class GPUParticleSystem {
 
   fillPositionTexture(texture) {
     const data = texture.image.data;
-    const radius = 5.0;
+    const radius = 12.0;
 
     for (let i = 0; i < data.length; i += 4) {
       // Random position in sphere
@@ -901,9 +901,9 @@ class GPUParticleSystem {
     const data = texture.image.data;
 
     for (let i = 0; i < data.length; i += 4) {
-      data[i + 0] = (Math.random() - 0.5) * 0.5; // vx
-      data[i + 1] = (Math.random() - 0.5) * 0.5; // vy
-      data[i + 2] = (Math.random() - 0.5) * 0.5; // vz
+      data[i + 0] = (Math.random() - 0.5) * 2.0; // vx
+      data[i + 1] = (Math.random() - 0.5) * 2.0; // vy
+      data[i + 2] = (Math.random() - 0.5) * 2.0; // vz
       data[i + 3] = 1.0;                          // mass
     }
   }
@@ -929,7 +929,7 @@ class GPUParticleSystem {
           // Respawn at random position in sphere
           float theta = fract(sin(uv.x * 123.456 + uTime) * 43758.5453) * 6.28318;
           float phi = acos(2.0 * fract(sin(uv.y * 789.012 + uTime) * 43758.5453) - 1.0);
-          float r = pow(fract(sin((uv.x + uv.y) * 456.789 + uTime) * 43758.5453), 0.333) * 3.0;
+          float r = pow(fract(sin((uv.x + uv.y) * 456.789 + uTime) * 43758.5453), 0.333) * 10.0;
 
           pos.x = r * sin(phi) * cos(theta);
           pos.y = r * sin(phi) * sin(theta);
@@ -1238,7 +1238,7 @@ class GPUParticleSystem {
           // Curl noise for organic movement
           vec3 noisePos = pos.xyz * uNoiseScale + uTime * uNoiseSpeed;
           vec3 curl = curlNoise(noisePos);
-          acceleration += curl * 2.0;
+          acceleration += curl * 6.0;
         }
 
         // Multi-shockwave forces (active in all modes)

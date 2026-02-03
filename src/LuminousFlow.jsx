@@ -3312,7 +3312,7 @@ function LuminousFlow() {
 
   // Post-processing parameters (Phase 4)
   const [bloomRadius, setBloomRadius] = useState(0.8);
-  const [bloomThreshold, setBloomThreshold] = useState(0.0);
+  const [bloomThreshold, setBloomThreshold] = useState(0.3);
   const [filmGrainIntensity, setFilmGrainIntensity] = useState(0.03);
   const [vignetteIntensity, setVignetteIntensity] = useState(1.2);
 
@@ -3458,7 +3458,7 @@ function LuminousFlow() {
       0.4,
       0.85
     );
-    bloomPass.threshold = 0;
+    bloomPass.threshold = 0.3;
     bloomPass.strength = 1.5;
     bloomPass.radius = 0.8;
     composer.addPass(bloomPass);
